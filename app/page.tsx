@@ -33,9 +33,9 @@ interface Message {
   action: MessageAction | null;
 }
 
-type LangLevel = "en" | "hi-essential" | "hi-full";
+type LangLevel = "en" | "hi-essential" | "hi-full" | "ta";
 
-// --- 3-TIER LOCALIZATION DICTIONARY ---
+// --- LOCALIZATION DICTIONARY (EN, HI, TA) ---
 const uiTranslations = {
   "en": {
     langLabel: "EN",
@@ -75,6 +75,19 @@ const uiTranslations = {
     totOut: "कुल बकाया", activeAcc: "सक्रिय खाते", recThisWeek: "इस सप्ताह वसूली",
     recSales: "हाल की बिक्री", recSalesDesc: "सभी लेनदेन की लाइव स्ट्रीम।", recSaleBtn: "सेल दर्ज करें",
     underDev: "मॉड्यूल अभी विकास में है।", checkBack: "बाद में देखें या कार्यों के लिए एआई एजेंट का उपयोग करें।"
+  },
+  "ta": {
+    langLabel: "TA",
+    main: "முக்கிய (MAIN)", dashboard: "டாஷ்போர்டு", inventory: "சரக்கு (Inventory)", sales: "விற்பனை (Sales)", khata: "கணக்கு (Khata)", orders: "ஆர்டர்கள் (Orders)",
+    business: "வணிகம் (BUSINESS)", suppliers: "சப்ளையர்கள் (Suppliers)", reports: "அறிக்கைகள் (Reports)", settings: "அமைப்புகள் (Settings)", search: "தேடுங்கள் (Search)...",
+    sysOverview: "கணினி கண்ணோட்டம்", invController: "சரக்கு கட்டுப்படுத்தி", salesFinance: "விற்பனை & நிதி",
+    manageStock: "சரக்குகளை நிர்வகி", lowStock: "குறைந்த சரக்கு", createPo: "கொள்முதல் ஆணை (PO)", supplierLedger: "சப்ளையர் லெட்ஜர்", stockRecon: "சரக்கு சமரசம்",
+    todaySales: "இன்றைய விற்பனை", manualSale: "கைமுறை விற்பனை", monthlyRev: "மாத வருவாய்", pendingRec: "நிலுவையில் உள்ளவை",
+    masterInv: "முதன்மை சரக்கு", invDesc: "உங்கள் தயாரிப்புகள் மற்றும் சரக்குகளை நிர்வகிக்கவும்.", addItem: "பொருளைச் சேர்",
+    khataTitle: "கணக்கு (வாடிக்கையாளர் லெட்ஜர்)", khataDesc: "நிலுவையில் உள்ள கொடுப்பனவுகள் மற்றும் கடன்களைக் கண்காணிக்கவும்.", newCust: "புதிய வாடிக்கையாளர்",
+    totOut: "மொத்த நிலுவை", activeAcc: "செயலில் உள்ள கணக்குகள்", recThisWeek: "இந்த வாரம் வசூலானது",
+    recSales: "சமீபத்திய விற்பனை", recSalesDesc: "அனைத்து பரிவர்த்தனைகளின் நேரடி ஸ்ட்ரீம்.", recSaleBtn: "விற்பனையை பதிவு செய்",
+    underDev: "தொகுதி தற்போது உருவாக்கத்தில் உள்ளது.", checkBack: "பின்னர் பார்க்கவும் அல்லது AI ஐப் பயன்படுத்தவும்."
   }
 };
 
@@ -154,6 +167,7 @@ export default function Dashboard() {
   const cycleLanguage = () => {
     if (language === "en") setLanguage("hi-essential");
     else if (language === "hi-essential") setLanguage("hi-full");
+    else if (language === "hi-full") setLanguage("ta");
     else setLanguage("en");
   };
 
@@ -586,7 +600,7 @@ export default function Dashboard() {
                         </TableCell>
                         <TableCell className="text-right text-rose-400 font-bold">{customer.balance}</TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" variant="outline" className="border-zinc-700 text-black-300 hover:bg-zinc-800 hover:text-white">Settle Due</Button>
+                          <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white">Settle Due</Button>
                         </TableCell>
                       </TableRow>
                     ))}
