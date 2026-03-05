@@ -62,27 +62,33 @@ def parse_intent(message: str, context: str) -> AgentResponse:
     # Wrap user message in delimiters to reduce prompt injection risk
     safe_message = f"<user_input>{message}</user_input>"
 
-    try:
-        response = model.generate_content(
-            safe_message,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=AgentResponse,
-                temperature=0.1 
-            ),
-            request_options={"timeout": 15}
-        )
-        
-        return AgentResponse.model_validate_json(response.text)
+    import time
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            response = model.generate_content(
+                safe_message,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=AgentResponse,
+                    temperature=0.1 
+                ),
+                request_options={"timeout": 20}
+            )
+            
+            return AgentResponse.model_validate_json(response.text)
 
-    except Exception as e:
-        logger.error(f"Gemini API Error: {e}")
-        return AgentResponse(
-            action="unknown",
-            sku="",
-            quantity=0,
-            amount=0.0,
-            customer_name="",
-            confidence=0.0,
-            response_text="I encountered a system error while processing that request. Could you please try again?"
-        )
+        except Exception as e:
+            logger.error(f"Gemini API Error (attempt {attempt+1}/{max_retries+1}): {type(e).__name__}: {e}")
+            if attempt < max_retries:
+                time.sleep(8)  # Gemini free-tier rate limit backoff
+                continue
+            return AgentResponse(
+                action="unknown",
+                sku="",
+                quantity=0,
+                amount=0.0,
+                customer_name="",
+                confidence=0.0,
+                response_text="System busy. Thoda wait karein aur phir try karein."
+            )

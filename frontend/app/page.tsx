@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { apiFetch, SHOP_ID } from "@/lib/api"
+import { sarvamSTT, sarvamTTS, mapLanguageToSarvam } from "@/lib/sarvam"
 import {
   LayoutDashboard, Package, Wallet, Truck, Users, FileText,
   Settings, Mic, Send, AlertTriangle, Plus, Search,
@@ -133,7 +134,7 @@ const uiTranslations = {
 
 export default function Dashboard() {
   // --- CORE APP STATES ---
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("dark"); // Theme State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -158,7 +159,13 @@ export default function Dashboard() {
   const [loadingData, setLoadingData] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  // --- LIVE DATA STATES (fetched from backend) ---
+  // --- VOICE RECORDING STATES ---
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  // --- LIVE DATA STATES ---
   const [stats, setStats] = useState({
     todaySales: "₹0", salesTrend: "", totalItems: 0,
     lowStock: 0, pendingOrders: 0, monthlyRev: "₹0"
@@ -175,6 +182,20 @@ export default function Dashboard() {
   const [salesList, setSalesList] = useState<
     { id: string; items: string; total: string; type: string; time: string }[]
   >([]);
+
+  const [suppliersList, setSuppliersList] = useState<
+    { id: string; name: string; contact: string; products: string; dues: string; status: string }[]
+  >([]);
+
+  const [ordersList, setOrdersList] = useState<
+    { id: string; supplier: string; items: string; total: string; status: string; date: string }[]
+  >([]);
+
+  const [reportsData, setReportsData] = useState({
+    pnl: "₹0", revenue: "₹0", gst: "₹0",
+    topProducts: [] as { name: string; sold: number; rev: string }[],
+    lowStockAlerts: [] as { name: string; current: number; threshold: number }[]
+  });
 
   // Store the last agent response for confirmation flow
   const [pendingAction, setPendingAction] = useState<AgentApiResponse | null>(null);
@@ -204,8 +225,6 @@ export default function Dashboard() {
 
   // --- LIVE DATA FETCHING ---
   const fetchInventory = useCallback(async () => {
-    setLoadingData(true);
-    setApiError(null);
     try {
       const data: any = await apiFetch(`/inventory/?shop_id=${SHOP_ID}&limit=50`);
       setInventoryList(data.products.map((p: BackendProduct) => ({
@@ -215,25 +234,19 @@ export default function Dashboard() {
       })));
     } catch (err: any) {
       setApiError(err.message || "Failed to load inventory");
-    } finally {
-      setLoadingData(false);
     }
   }, []);
 
   const fetchSales = useCallback(async () => {
-    setLoadingData(true);
-    setApiError(null);
     try {
       const data: any = await apiFetch(`/sales/?shop_id=${SHOP_ID}&limit=20`);
       setSalesList(data.sales.map((s: BackendSale) => {
         const date = new Date(s.created_at);
         const now = new Date();
-        const diffMs = now.getTime() - date.getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-        let timeStr = diffMins < 60 ? `${diffMins} mins ago` : diffMins < 1440 ? `${Math.floor(diffMins / 60)} hours ago` : `${Math.floor(diffMins / 1440)} days ago`;
+        const diffMins = Math.floor((now.getTime() - date.getTime()) / 60000);
+        const timeStr = diffMins < 60 ? `${diffMins} mins ago` : diffMins < 1440 ? `${Math.floor(diffMins / 60)} hours ago` : `${Math.floor(diffMins / 1440)} days ago`;
         return {
-          id: `INV-${s.id}`,
-          items: `${s.product_name} (x${s.qty_sold})`,
+          id: `INV-${s.id}`, items: `${s.product_name} (x${s.qty_sold})`,
           total: `₹${s.amount.toLocaleString()}`,
           type: s.created_by === "agent" ? "AI Agent" : s.created_by === "admin" ? "Manual" : "Cash",
           time: timeStr
@@ -241,61 +254,95 @@ export default function Dashboard() {
       }));
     } catch (err: any) {
       setApiError(err.message || "Failed to load sales");
-    } finally {
-      setLoadingData(false);
     }
   }, []);
 
   const fetchKhata = useCallback(async () => {
-    setLoadingData(true);
-    setApiError(null);
     try {
       const data: any = await apiFetch(`/khata/?shop_id=${SHOP_ID}&limit=50`);
-      setKhataList(data.accounts.map((k: BackendKhata) => {
-        const lastDate = k.last_payment_date ? new Date(k.last_payment_date) : null;
-        const lastActive = lastDate ? (k.days_overdue === 0 ? "Recent" : `${k.days_overdue} days overdue`) : "N/A";
-        return {
-          id: k.id, name: k.customer_name, phone: k.phone || "N/A",
-          balance: `₹${k.outstanding_balance.toLocaleString()}`,
-          lastActive,
-          status: k.days_overdue > 30 ? "Overdue" : "Pending"
-        };
-      }));
+      setKhataList(data.accounts.map((k: BackendKhata) => ({
+        id: k.id, name: k.customer_name, phone: k.phone || "N/A",
+        balance: `₹${k.outstanding_balance.toLocaleString()}`,
+        lastActive: k.days_overdue === 0 ? "Recent" : `${k.days_overdue} days overdue`,
+        status: k.days_overdue > 30 ? "Overdue" : "Pending"
+      })));
     } catch (err: any) {
       setApiError(err.message || "Failed to load khata");
-    } finally {
-      setLoadingData(false);
     }
   }, []);
 
-  const fetchDashboardStats = useCallback(async () => {
+  const fetchSuppliers = useCallback(async () => {
+    try {
+      const data: any = await apiFetch(`/suppliers/?shop_id=${SHOP_ID}`);
+      setSuppliersList(data.suppliers.map((s: any) => ({
+        id: `SUP-${s.id}`, name: s.name, contact: s.contact_info || "N/A",
+        products: s.category || "General", dues: `₹${(s.pending_amount || 0).toLocaleString()}`,
+        status: (s.pending_amount || 0) > 0 ? "Pending Payment" : "Active"
+      })));
+    } catch { /* Suppliers are non-critical */ }
+  }, []);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const data: any = await apiFetch(`/suppliers/orders?shop_id=${SHOP_ID}`);
+      setOrdersList(data.orders.map((o: any) => ({
+        id: `PO-${o.id}`, supplier: o.supplier_name || "Unknown",
+        items: `${o.notes || "Items"} (x${o.quantity || 1})`,
+        total: `₹${(o.total_cost || 0).toLocaleString()}`,
+        status: o.status || "Pending", date: new Date(o.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+      })));
+    } catch { /* Orders are non-critical */ }
+  }, []);
+
+  const fetchReports = useCallback(async () => {
     try {
       const [reportData, analyticsData]: [any, any] = await Promise.all([
         apiFetch(`/reports/summary?shop_id=${SHOP_ID}`),
         apiFetch(`/reports/analytics?shop_id=${SHOP_ID}`)
       ]);
       const pnl = reportData.profit_and_loss;
-      setStats({
+      const top = reportData.top_products || [];
+      const gstData = reportData.gst_summary;
+      const lowAlerts = analyticsData.low_stock_alerts || [];
+      setReportsData({
+        pnl: `₹${pnl.net_profit.toLocaleString()}`,
+        revenue: `₹${pnl.total_revenue.toLocaleString()}`,
+        gst: `₹${(gstData?.total_gst || 0).toLocaleString()}`,
+        topProducts: top.map((p: any) => ({ name: p.name, sold: p.quantity_sold, rev: `₹${p.revenue.toLocaleString()}` })),
+        lowStockAlerts: lowAlerts.map((a: any) => ({ name: a.name, current: a.current_quantity, threshold: a.low_stock_threshold }))
+      });
+      setStats(prev => ({
+        ...prev,
         todaySales: `₹${pnl.total_revenue.toLocaleString()}`,
         salesTrend: pnl.profit_margin_percent > 0 ? `+${pnl.profit_margin_percent}%` : `${pnl.profit_margin_percent}%`,
-        totalItems: inventoryList.length || 0,
-        lowStock: analyticsData.low_stock_alerts?.length || 0,
-        pendingOrders: 0,
+        lowStock: lowAlerts.length,
         monthlyRev: `₹${(pnl.total_revenue / 1000).toFixed(1)}K`
-      });
-    } catch { /* Dashboard stats are non-critical, fail silently */ }
-  }, [inventoryList.length]);
+      }));
+    } catch { /* Reports non-critical */ }
+  }, []);
 
   // Fetch data when tab changes
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (activeTab === "inventory") fetchInventory();
-    else if (activeTab === "sales") fetchSales();
-    else if (activeTab === "khata") fetchKhata();
-    else if (activeTab === "dashboard") {
-      fetchInventory().then(() => fetchDashboardStats());
-    }
-  }, [activeTab, isAuthenticated, fetchInventory, fetchSales, fetchKhata, fetchDashboardStats]);
+    setApiError(null);
+    setLoadingData(true);
+    const load = async () => {
+      if (activeTab === "dashboard") { await fetchInventory(); await fetchReports(); }
+      else if (activeTab === "inventory") await fetchInventory();
+      else if (activeTab === "sales") await fetchSales();
+      else if (activeTab === "khata") await fetchKhata();
+      else if (activeTab === "suppliers") await fetchSuppliers();
+      else if (activeTab === "orders") await fetchOrders();
+      else if (activeTab === "reports") await fetchReports();
+      setLoadingData(false);
+    };
+    load();
+  }, [activeTab, isAuthenticated, fetchInventory, fetchSales, fetchKhata, fetchSuppliers, fetchOrders, fetchReports]);
+
+  // Update totalItems when inventory loads
+  useEffect(() => {
+    if (inventoryList.length > 0) setStats(prev => ({ ...prev, totalItems: inventoryList.length }));
+  }, [inventoryList]);
 
   const cycleLanguage = () => {
     if (language === "en") setLanguage("hi-essential");
@@ -308,72 +355,46 @@ export default function Dashboard() {
     setTheme(theme === "dark" ? "light" : "dark");
   };
 
-  // Actions that require user confirmation before DB write
+  // --- AI AGENT: ACTION HANDLING ---
   const WRITE_ACTIONS = ["update_stock", "record_sale", "khata_payment"];
-  // Actions that auto-execute (read-only queries)
   const READ_ACTIONS = ["get_stock", "get_khata", "get_report"];
 
-  // Auto-execute read-only query and show result in chat
   const handleReadAction = async (response: AgentApiResponse) => {
     try {
       let resultText = response.response_text;
-
       if (response.action === "get_stock") {
         const data: any = await apiFetch(`/inventory/?shop_id=${SHOP_ID}&limit=50`);
         const products = data.products;
         if (response.sku) {
           const match = products.find((p: any) => p.sku === response.sku);
-          if (match) {
-            resultText = `📦 ${match.name} (${match.sku})\nStock: ${match.quantity} units\nPrice: ₹${match.unit_price}\n${match.quantity <= match.low_stock_threshold ? "⚠️ Low stock!" : "✅ Stock healthy"}`;
-          } else {
-            resultText = response.response_text || "Product not found in inventory.";
-          }
+          resultText = match
+            ? `📦 ${match.name} (${match.sku})\nStock: ${match.quantity} units\nPrice: ₹${match.unit_price}\n${match.quantity <= match.low_stock_threshold ? "⚠️ Low stock!" : "✅ Stock healthy"}`
+            : response.response_text || "Product not found.";
         } else {
-          const stockSummary = products.slice(0, 5).map((p: any) =>
-            `• ${p.name}: ${p.quantity} units ${p.quantity <= p.low_stock_threshold ? "⚠️" : "✅"}`
-          ).join("\n");
-          resultText = `📦 Current Inventory:\n${stockSummary}${products.length > 5 ? `\n...and ${products.length - 5} more items` : ""}`;
+          const summary = products.slice(0, 5).map((p: any) => `• ${p.name}: ${p.quantity} units ${p.quantity <= p.low_stock_threshold ? "⚠️" : "✅"}`).join("\n");
+          resultText = `📦 Current Inventory:\n${summary}${products.length > 5 ? `\n...and ${products.length - 5} more` : ""}`;
         }
       } else if (response.action === "get_khata") {
         const data: any = await apiFetch(`/khata/?shop_id=${SHOP_ID}&limit=50`);
-        const accounts = data.accounts;
         if (response.customer_name) {
-          const match = accounts.find((k: any) =>
-            k.customer_name.toLowerCase().includes(response.customer_name.toLowerCase())
-          );
-          if (match) {
-            resultText = `📒 ${match.customer_name}\nOutstanding: ₹${match.outstanding_balance.toLocaleString()}\n${match.days_overdue > 0 ? `⚠️ ${match.days_overdue} days overdue` : "✅ On time"}`;
-          } else {
-            resultText = response.response_text || "Customer not found in khata records.";
-          }
+          const match = data.accounts.find((k: any) => k.customer_name.toLowerCase().includes(response.customer_name.toLowerCase()));
+          resultText = match
+            ? `📒 ${match.customer_name}\nOutstanding: ₹${match.outstanding_balance.toLocaleString()}\n${match.days_overdue > 0 ? `⚠️ ${match.days_overdue} days overdue` : "✅ On time"}`
+            : response.response_text || "Customer not found.";
         } else {
-          const khataSummary = accounts.slice(0, 5).map((k: any) =>
-            `• ${k.customer_name}: ₹${k.outstanding_balance.toLocaleString()} ${k.days_overdue > 30 ? "🔴" : "🟡"}`
-          ).join("\n");
-          resultText = `📒 Pending Khata:\n${khataSummary}`;
+          const summary = data.accounts.slice(0, 5).map((k: any) => `• ${k.customer_name}: ₹${k.outstanding_balance.toLocaleString()} ${k.days_overdue > 30 ? "🔴" : "🟡"}`).join("\n");
+          resultText = `📒 Pending Khata:\n${summary}`;
         }
       } else if (response.action === "get_report") {
-        const reportData: any = await apiFetch(`/reports/summary?shop_id=${SHOP_ID}`);
-        const pnl = reportData.profit_and_loss;
-        const top = reportData.top_products;
-        resultText = `📊 Monthly Report (${reportData.period}):\n` +
-          `Revenue: ₹${pnl.total_revenue.toLocaleString()}\n` +
-          `Expenses: ₹${pnl.total_expenses.toLocaleString()}\n` +
-          `Net Profit: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)\n` +
-          (top.length > 0 ? `\n🏆 Top Product: ${top[0].name} — ₹${top[0].revenue.toLocaleString()}` : "");
+        const rpt: any = await apiFetch(`/reports/summary?shop_id=${SHOP_ID}`);
+        const pnl = rpt.profit_and_loss;
+        resultText = `📊 Monthly Report (${rpt.period}):\nRevenue: ₹${pnl.total_revenue.toLocaleString()}\nExpenses: ₹${pnl.total_expenses.toLocaleString()}\nNet Profit: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)`;
       }
-
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1, role: "agent",
-        text: resultText,
-        language: null, action: null,
-      }]);
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: resultText, language: null, action: null }]);
+      // TTS: speak read action results
+      try { sarvamTTS(resultText, mapLanguageToSarvam(language)); } catch { }
     } catch (err: any) {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1, role: "agent",
-        text: `⚠️ Could not fetch data: ${err.message}`,
-        language: null, action: null,
-      }]);
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: `⚠️ Could not fetch data: ${err.message}`, language: null, action: null }]);
     }
   };
 
@@ -393,30 +414,18 @@ export default function Dashboard() {
         body: JSON.stringify({ shop_id: SHOP_ID, message: userText }),
       });
 
-      // Branch 1: READ-ONLY actions — auto-execute immediately, no confirmation needed
       if (READ_ACTIONS.includes(response.action)) {
-        setMessages(prev => [...prev, {
-          id: Date.now() + 1, role: "agent",
-          text: "🔍 Checking...",
-          language: null, action: null,
-        }]);
+        setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: "🔍 Checking...", language: null, action: null }]);
         setIsTyping(false);
         await handleReadAction(response);
         return;
       }
 
-      // Branch 2: WRITE actions — show confirmation card if confidence is high enough
       if (WRITE_ACTIONS.includes(response.action) && response.confidence >= 0.7) {
         setPendingAction(response);
-
-        const confidenceLabel = response.confidence >= 0.85
-          ? ""
-          : " ⚠️ Medium confidence";
-
         const agentMsg: Message = {
-          id: Date.now() + 1,
-          role: "agent",
-          text: response.response_text + confidenceLabel,
+          id: Date.now() + 1, role: "agent",
+          text: response.response_text + (response.confidence < 0.85 ? " ⚠️ Medium confidence" : ""),
           language: null,
           action: {
             item: response.sku || response.customer_name || "N/A",
@@ -425,96 +434,45 @@ export default function Dashboard() {
           },
         };
         setMessages(prev => [...prev, agentMsg]);
-      }
-      // Branch 3: Low confidence write, clarify, or unknown — just show text
-      else {
-        const clarifyText = response.confidence < 0.7 && WRITE_ACTIONS.includes(response.action)
-          ? (response.response_text || "Samajh nahi aaya. Thoda aur detail dein?") + " (Confidence too low to execute)"
-          : (response.response_text || "Samajh nahi aaya. Dobara bolein?");
-
+      } else {
         setMessages(prev => [...prev, {
           id: Date.now() + 1, role: "agent",
-          text: clarifyText,
+          text: response.response_text || "Samajh nahi aaya. Dobara bolein?",
           language: null, action: null,
         }]);
       }
     } catch (err: any) {
       setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        role: "agent",
-        text: err.message?.includes("timed out")
-          ? "⏳ Taking too long. Check connection."
-          : "❌ AI unavailable. Try again.",
-        language: null,
-        action: null,
+        id: Date.now() + 1, role: "agent",
+        text: err.message?.includes("timed out") ? "⏳ Taking too long. Check connection." : "❌ AI unavailable. Try again.",
+        language: null, action: null,
       }]);
     } finally {
       setIsTyping(false);
     }
   };
 
-  // Handle confirm action from the chat confirmation card
   const handleConfirmAction = async () => {
     if (!pendingAction) return;
     setIsTyping(true);
-
     try {
       let result: any;
       if (pendingAction.action === "update_stock") {
         result = await apiFetch("/inventory/update", {
           method: "POST",
-          body: JSON.stringify({
-            shop_id: SHOP_ID, sku: pendingAction.sku,
-            quantity: pendingAction.quantity, update_type: "incoming"
-          }),
+          body: JSON.stringify({ shop_id: SHOP_ID, sku: pendingAction.sku, quantity: pendingAction.quantity, update_type: "incoming" }),
         });
       } else if (pendingAction.action === "record_sale") {
         result = await apiFetch("/sales/record", {
           method: "POST",
-          body: JSON.stringify({
-            shop_id: SHOP_ID, sku: pendingAction.sku,
-            qty_sold: pendingAction.quantity, amount: pendingAction.amount, created_by: "agent"
-          }),
+          body: JSON.stringify({ shop_id: SHOP_ID, sku: pendingAction.sku, qty_sold: pendingAction.quantity, amount: pendingAction.amount, created_by: "agent" }),
         });
-      } else if (pendingAction.action === "khata_payment") {
-        // For khata payment, we show the balance info since there's no dedicated payment endpoint yet
-        const data: any = await apiFetch(`/khata/?shop_id=${SHOP_ID}&limit=50`);
-        const match = data.accounts?.find((k: any) =>
-          k.customer_name.toLowerCase().includes(pendingAction.customer_name.toLowerCase())
-        );
-        result = { data: { balance: match ? `₹${match.outstanding_balance.toLocaleString()}` : "N/A" } };
       }
-
-      const successDetails = result?.data
-        ? (result.data.new_quantity != null ? ` New stock: ${result.data.new_quantity}`
-          : result.data.remaining_stock != null ? ` Remaining stock: ${result.data.remaining_stock}`
-            : result.data.balance ? ` Balance: ${result.data.balance}`
-              : "")
-        : "";
-
-      setMessages(prev => [...prev, {
-        id: Date.now(), role: "agent",
-        text: `✅ Action confirmed and executed!${successDetails}`,
-        language: null, action: null
-      }]);
-
-      // Refresh ONLY the affected data
-      if (pendingAction.action === "update_stock") {
-        fetchInventory();
-      } else if (pendingAction.action === "record_sale") {
-        fetchInventory();
-        fetchSales();
-      } else if (pendingAction.action === "khata_payment") {
-        fetchKhata();
-      }
-      // Also refresh dashboard stats
-      fetchDashboardStats();
+      const detail = result?.data?.new_quantity != null ? ` New stock: ${result.data.new_quantity}` : result?.data?.remaining_stock != null ? ` Remaining: ${result.data.remaining_stock}` : "";
+      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `✅ Action confirmed!${detail}`, language: null, action: null }]);
+      fetchInventory(); fetchSales(); fetchReports();
     } catch (err: any) {
-      setMessages(prev => [...prev, {
-        id: Date.now(), role: "agent",
-        text: `❌ Could not save. Try again. (${err.message})`,
-        language: null, action: null
-      }]);
+      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `❌ Failed: ${err.message}`, language: null, action: null }]);
     } finally {
       setIsTyping(false);
       setPendingAction(null);
@@ -523,11 +481,51 @@ export default function Dashboard() {
 
   const handleCancelAction = () => {
     setPendingAction(null);
-    setMessages(prev => [...prev, {
-      id: Date.now(), role: "agent",
-      text: "❌ Cancelled. Kuch aur help chahiye?",
-      language: null, action: null
-    }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: "❌ Cancelled. Kuch aur help chahiye?", language: null, action: null }]);
+  };
+
+  // --- VOICE RECORDING ---
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mediaRecorder.start();
+      mediaRecorderRef.current = mediaRecorder;
+      setIsRecording(true);
+    } catch {
+      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: "🎤 Mic permission denied. Please allow microphone access.", language: null, action: null }]);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
+    setIsRecording(false);
+    setIsProcessingAudio(true);
+
+    const recorder = mediaRecorderRef.current;
+    return new Promise<void>((resolve) => {
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        recorder.stream.getTracks().forEach(track => track.stop());
+        try {
+          const transcript = await sarvamSTT(audioBlob, mapLanguageToSarvam(language));
+          if (transcript.trim()) {
+            setInputText(transcript);
+          } else {
+            setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: "🎤 Couldn't hear clearly. Please try again or type your command.", language: null, action: null }]);
+          }
+        } catch (err: any) {
+          console.error("Sarvam STT Error:", err);
+          setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `🎤 Voice error: ${err.message || 'Unknown error'}. Please type your command.`, language: null, action: null }]);
+        } finally {
+          setIsProcessingAudio(false);
+        }
+        resolve();
+      };
+      recorder.stop();
+    });
   };
 
   const getPageTitle = () => {
@@ -796,7 +794,23 @@ export default function Dashboard() {
             onClick={() => { if (isNotifOpen) setIsNotifOpen(false); if (isProfileOpen) setIsProfileOpen(false); }}
           >
 
-            {/* VIEW: DASHBOARD (SAP CARDS) */}
+            {/* Loading Spinner */}
+            {loadingData && (
+              <div className="flex items-center gap-2 mb-4 text-sm text-indigo-600 dark:text-indigo-400 animate-pulse">
+                <div className="w-4 h-4 border-2 border-indigo-600 dark:border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                Loading data...
+              </div>
+            )}
+
+            {/* Error Banner */}
+            {apiError && (
+              <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg flex items-center justify-between">
+                <span className="text-sm text-rose-600 dark:text-rose-400">⚠️ {apiError}</span>
+                <button onClick={() => setApiError(null)} className="text-rose-400 hover:text-rose-600 dark:hover:text-rose-300">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             {activeTab === "dashboard" && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="mb-10">
@@ -805,18 +819,18 @@ export default function Dashboard() {
                     <SapCard title={t.manageStock} subtitle={`${stats.totalItems} Items`} icon={<Package />} onClick={() => setActiveTab("inventory")} />
                     <SapCard title={t.lowStock} subtitle={`${stats.lowStock} Items`} icon={<AlertTriangle />} alert />
                     <SapCard title={t.createPo} icon={<Plus />} />
-                    <SapCard title={t.supplierLedger} subtitle="Dues: ₹4,200" icon={<Users />} />
-                    <SapCard title={t.stockRecon} icon={<FileSpreadsheet />} />
+                    <SapCard title={t.supplierLedger} subtitle="Dues: ₹4,200" icon={<Users />} onClick={() => setActiveTab("suppliers")} />
+                    <SapCard title={t.stockRecon} icon={<FileSpreadsheet />} onClick={() => setActiveTab("reports")} />
                   </div>
                 </div>
 
                 <div className="mb-10">
                   <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">{t.salesFinance}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                    <SapCard title={t.todaySales} subtitle={`${stats.todaySales} (${stats.salesTrend})`} icon={<Wallet />} highlight />
-                    <SapCard title={t.manualSale} icon={<Receipt />} />
-                    <SapCard title={t.monthlyRev} subtitle={stats.monthlyRev} icon={<BarChart3 />} />
-                    <SapCard title={t.pendingRec} subtitle={`${stats.pendingOrders} Invoices`} icon={<FileText />} />
+                    <SapCard title={t.todaySales} subtitle={`${stats.todaySales} (${stats.salesTrend})`} icon={<Wallet />} highlight onClick={() => setActiveTab("sales")} />
+                    <SapCard title={t.manualSale} icon={<Receipt />} onClick={() => setActiveTab("sales")} />
+                    <SapCard title={t.monthlyRev} subtitle={stats.monthlyRev} icon={<BarChart3 />} onClick={() => setActiveTab("reports")} />
+                    <SapCard title={t.pendingRec} subtitle={`${stats.pendingOrders} Invoices`} icon={<FileText />} onClick={() => setActiveTab("khata")} />
                   </div>
                 </div>
               </div>
@@ -825,17 +839,6 @@ export default function Dashboard() {
             {/* VIEW: INVENTORY TABLE */}
             {activeTab === "inventory" && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {apiError && (
-                  <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg text-rose-700 dark:text-rose-400 text-sm flex items-center gap-2">
-                    <AlertTriangle size={16} /> {apiError}
-                  </div>
-                )}
-                {loadingData && (
-                  <div className="flex items-center justify-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                    <span className="ml-3 text-zinc-500">Loading inventory...</span>
-                  </div>
-                )}
                 <div className="flex justify-between items-center mb-6">
                   <div>
                     <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">{t.masterInv}</h3>
@@ -857,20 +860,24 @@ export default function Dashboard() {
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
-                          <Label htmlFor="name" className="text-right text-zinc-700 dark:text-zinc-300">Name</Label>
-                          <Input id="name" placeholder="e.g. Parle-G 50g" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                          <Label htmlFor="add-sku" className="text-right text-zinc-700 dark:text-zinc-300">SKU</Label>
+                          <Input id="add-sku" placeholder="PAR-50G" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
-                          <Label htmlFor="sku" className="text-right text-zinc-700 dark:text-zinc-300">SKU</Label>
-                          <Input id="sku" placeholder="PAR-50G" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
-                          <Label htmlFor="stock" className="text-right text-zinc-700 dark:text-zinc-300">Stock Qty</Label>
-                          <Input id="stock" type="number" placeholder="100" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                          <Label htmlFor="add-qty" className="text-right text-zinc-700 dark:text-zinc-300">Stock Qty</Label>
+                          <Input id="add-qty" type="number" placeholder="100" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white">Save Item</Button>
+                        <Button onClick={async () => {
+                          const sku = (document.getElementById('add-sku') as HTMLInputElement)?.value;
+                          const qty = parseInt((document.getElementById('add-qty') as HTMLInputElement)?.value || '0');
+                          if (!sku || qty <= 0) return;
+                          try {
+                            await apiFetch('/inventory/update', { method: 'POST', body: JSON.stringify({ shop_id: SHOP_ID, sku, quantity: qty, update_type: 'incoming' }) });
+                            fetchInventory();
+                          } catch (err: any) { setApiError(err.message); }
+                        }} className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white">Save Item</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
@@ -927,15 +934,15 @@ export default function Dashboard() {
                 <div className="grid grid-cols-3 gap-6 mb-8">
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">{t.totOut}</p>
-                    <p className="text-3xl font-bold text-rose-600 dark:text-rose-400">₹6,070</p>
+                    <p className="text-3xl font-bold text-rose-600 dark:text-rose-400">₹{khataList.reduce((sum, k) => sum + parseInt(k.balance.replace(/[₹,]/g, '') || '0'), 0).toLocaleString()}</p>
                   </Card>
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">{t.activeAcc}</p>
-                    <p className="text-3xl font-bold text-zinc-900 dark:text-white">24</p>
+                    <p className="text-3xl font-bold text-zinc-900 dark:text-white">{khataList.length}</p>
                   </Card>
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">{t.recThisWeek}</p>
-                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">₹2,150</p>
+                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">₹0</p>
                   </Card>
                 </div>
 
@@ -964,7 +971,39 @@ export default function Dashboard() {
                           </TableCell>
                           <TableCell className="text-right text-rose-600 dark:text-rose-400 font-bold">{customer.balance}</TableCell>
                           <TableCell className="text-right">
-                            <Button size="sm" variant="outline" className="border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white">Settle Due</Button>
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button size="sm" variant="outline" className="border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white">Settle Due</Button>
+                              </DialogTrigger>
+                              <DialogContent className="sm:max-w-[425px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white">
+                                <DialogHeader>
+                                  <DialogTitle>Settle Khata Due</DialogTitle>
+                                  <DialogDescription className="text-zinc-500 dark:text-zinc-400">
+                                    Record a payment to clear the outstanding balance for {customer.name}.
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="grid gap-4 py-4">
+                                  <div className="flex justify-between items-center bg-rose-50 dark:bg-rose-500/10 p-3 rounded-lg border border-rose-100 dark:border-rose-500/20">
+                                    <span className="text-sm font-medium text-rose-600 dark:text-rose-400">Total Outstanding:</span>
+                                    <span className="text-lg font-bold text-rose-600 dark:text-rose-400">{customer.balance}</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor={`amount-${customer.id}`} className="text-right text-zinc-700 dark:text-zinc-300">Amount</Label>
+                                    <Input id={`amount-${customer.id}`} placeholder="₹0.00" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                                  </div>
+                                  <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor={`mode-${customer.id}`} className="text-right text-zinc-700 dark:text-zinc-300">Mode</Label>
+                                    <select id={`mode-${customer.id}`} className="col-span-3 flex h-10 w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 px-3 py-2 text-sm text-zinc-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                                      <option value="cash">Cash</option>
+                                      <option value="upi">UPI / QR Code</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <DialogFooter>
+                                  <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 dark:hover:bg-emerald-500 text-white">Record Payment</Button>
+                                </DialogFooter>
+                              </DialogContent>
+                            </Dialog>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -982,9 +1021,52 @@ export default function Dashboard() {
                     <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">{t.recSales}</h3>
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm">{t.recSalesDesc}</p>
                   </div>
-                  <Button className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
-                    <Receipt className="mr-2 h-4 w-4" /> {t.recSaleBtn}
-                  </Button>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+                        <Receipt className="mr-2 h-4 w-4" /> {t.recSaleBtn}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[425px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white">
+                      <DialogHeader>
+                        <DialogTitle>Record Manual Sale</DialogTitle>
+                        <DialogDescription className="text-zinc-500 dark:text-zinc-400">
+                          Log a new transaction manually.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="sale-item" className="text-right text-zinc-700 dark:text-zinc-300">Item</Label>
+                          <select id="sale-item" className="col-span-3 flex h-10 w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-950 px-3 py-2 text-sm text-zinc-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                            <option value="">Select Product...</option>
+                            {inventoryList.map(item => (
+                              <option key={item.sku} value={item.sku}>{item.name} ({item.sku})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="sale-qty" className="text-right text-zinc-700 dark:text-zinc-300">Quantity</Label>
+                          <Input id="sale-qty" type="number" placeholder="1" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="sale-amount" className="text-right text-zinc-700 dark:text-zinc-300">Amount (₹)</Label>
+                          <Input id="sale-amount" type="number" placeholder="0" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button onClick={async () => {
+                          const sku = (document.getElementById('sale-item') as HTMLSelectElement)?.value;
+                          const qty = parseInt((document.getElementById('sale-qty') as HTMLInputElement)?.value || '0');
+                          const amount = parseFloat((document.getElementById('sale-amount') as HTMLInputElement)?.value || '0');
+                          if (!sku || qty <= 0 || amount <= 0) return;
+                          try {
+                            await apiFetch('/sales/record', { method: 'POST', body: JSON.stringify({ shop_id: SHOP_ID, sku, qty_sold: qty, amount, created_by: 'admin' }) });
+                            fetchSales(); fetchInventory(); fetchReports();
+                          } catch (err: any) { setApiError(err.message); }
+                        }} className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white">Confirm Sale</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
 
                 <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none">
@@ -1022,8 +1104,254 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* VIEW: SUPPLIERS */}
+            {activeTab === "suppliers" && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">Supplier Directory</h3>
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm">Manage your wholesale partners and pending dues.</p>
+                  </div>
+                  <Button className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+                    <Plus className="mr-2 h-4 w-4" /> Add Supplier
+                  </Button>
+                </div>
+
+                <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none">
+                  <Table>
+                    <TableHeader className="bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                      <TableRow className="border-zinc-200 dark:border-zinc-800">
+                        <TableHead className="w-[100px] text-zinc-500 dark:text-zinc-400">ID</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Supplier Name</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Contact Info</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Key Products</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Status</TableHead>
+                        <TableHead className="text-right text-zinc-500 dark:text-zinc-400">Pending Dues</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {suppliersList.map((supplier) => (
+                        <TableRow key={supplier.id} className="border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                          <TableCell className="font-medium text-zinc-900 dark:text-zinc-300">{supplier.id}</TableCell>
+                          <TableCell className="text-zinc-900 dark:text-white font-medium">{supplier.name}</TableCell>
+                          <TableCell className="text-zinc-600 dark:text-zinc-300">{supplier.contact}</TableCell>
+                          <TableCell className="text-zinc-500 dark:text-zinc-400 text-sm">{supplier.products}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={
+                              supplier.status === 'Active' ? 'text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10' :
+                                'text-rose-600 dark:text-rose-400 border-rose-500/20 bg-rose-50 dark:bg-rose-500/10'
+                            }>
+                              {supplier.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-rose-600 dark:text-rose-400 font-bold">{supplier.dues}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
+            )}
+
+            {/* VIEW: PURCHASE ORDERS */}
+            {activeTab === "orders" && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">Purchase Orders</h3>
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm">Track incoming stock and supplier orders.</p>
+                  </div>
+                  <Button className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
+                    <Truck className="mr-2 h-4 w-4" /> Create PO
+                  </Button>
+                </div>
+
+                <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none">
+                  <Table>
+                    <TableHeader className="bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                      <TableRow className="border-zinc-200 dark:border-zinc-800">
+                        <TableHead className="w-[120px] text-zinc-500 dark:text-zinc-400">PO Number</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Supplier</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Items Ordered</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Order Date</TableHead>
+                        <TableHead className="text-zinc-500 dark:text-zinc-400">Status</TableHead>
+                        <TableHead className="text-right text-zinc-500 dark:text-zinc-400">Total Cost</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {ordersList.map((order) => (
+                        <TableRow key={order.id} className="border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                          <TableCell className="font-medium text-zinc-900 dark:text-zinc-300">{order.id}</TableCell>
+                          <TableCell className="text-zinc-900 dark:text-white">{order.supplier}</TableCell>
+                          <TableCell className="text-zinc-600 dark:text-zinc-300 text-sm">{order.items}</TableCell>
+                          <TableCell className="text-zinc-500 dark:text-zinc-400 text-sm">{order.date}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={
+                              order.status === 'Delivered' ? 'text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10' :
+                                'text-amber-600 dark:text-amber-400 border-amber-500/20 bg-amber-50 dark:bg-amber-500/10'
+                            }>
+                              {order.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-zinc-900 dark:text-white font-bold">{order.total}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
+            )}
+
+            {/* VIEW: REPORTS & ANALYTICS */}
+            {activeTab === "reports" && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">Business Reports</h3>
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm">Monthly P&L, GST summary, and low stock analytics.</p>
+                  </div>
+                  <Button className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+                    <FileText className="mr-2 h-4 w-4" /> Download PDF
+                  </Button>
+                </div>
+
+                {/* Financial KPIs */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Monthly P&L (Profit)</p>
+                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{reportsData.pnl}</p>
+                  </Card>
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Total Revenue</p>
+                    <p className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{reportsData.revenue}</p>
+                  </Card>
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
+                    <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Estimated GST</p>
+                    <p className="text-3xl font-bold text-amber-600 dark:text-amber-400">{reportsData.gst}</p>
+                  </Card>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Top Products */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Top Performing Products</h4>
+                    <div className="space-y-4">
+                      {reportsData.topProducts.map((prod, idx) => (
+                        <div key={idx} className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3 last:border-0 last:pb-0">
+                          <div>
+                            <p className="font-medium text-zinc-900 dark:text-zinc-200">{prod.name}</p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">{prod.sold} units sold</p>
+                          </div>
+                          <p className="font-bold text-zinc-900 dark:text-white">{prod.rev}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  {/* Low Stock Alerts */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-rose-200 dark:border-rose-900/50 shadow-sm dark:shadow-none p-6 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-bl-full pointer-events-none"></div>
+                    <div className="flex items-center gap-2 mb-4 relative z-10">
+                      <AlertTriangle className="text-rose-600 dark:text-rose-400 w-5 h-5" />
+                      <h4 className="text-lg font-semibold text-rose-600 dark:text-rose-400">Critical Stock Alerts</h4>
+                    </div>
+                    <div className="space-y-4 relative z-10">
+                      {reportsData.lowStockAlerts.map((alert, idx) => (
+                        <div key={idx} className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3 last:border-0 last:pb-0">
+                          <div>
+                            <p className="font-medium text-zinc-900 dark:text-zinc-200">{alert.name}</p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">Threshold: {alert.threshold}</p>
+                          </div>
+                          <Badge variant="outline" className="text-rose-600 dark:text-rose-400 border-rose-500/20 bg-rose-50 dark:bg-rose-500/10">
+                            {alert.current} Left
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                    <Button className="w-full mt-6 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 relative z-10">
+                      Auto-Generate PO
+                    </Button>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* VIEW: SETTINGS */}
+            {activeTab === "settings" && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl">
+                <div className="mb-6">
+                  <h3 className="text-2xl font-semibold text-zinc-900 dark:text-white">{t.settings}</h3>
+                  <p className="text-zinc-500 dark:text-zinc-400 text-sm">Manage your shop preferences and app configuration.</p>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Shop Info */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4 flex items-center gap-2"><Settings size={18} /> Shop Information</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Shop ID</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">{SHOP_ID}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Platform</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">BazaarOS v1.0</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Backend</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">{process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">AI Engine</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">Gemini 2.5 Flash</p>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Appearance */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4 flex items-center gap-2">{theme === 'dark' ? <Moon size={18} /> : <Sun size={18} />} Appearance</h4>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">Theme</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Toggle between dark and light mode</p>
+                      </div>
+                      <Button onClick={toggleTheme} variant="outline" className="border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
+                        {theme === 'dark' ? <><Sun size={16} className="mr-2" /> Light Mode</> : <><Moon size={16} className="mr-2" /> Dark Mode</>}
+                      </Button>
+                    </div>
+                  </Card>
+
+                  {/* Language */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4 flex items-center gap-2"><Globe size={18} /> Language</h4>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">Interface Language</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Current: {t.langLabel}</p>
+                      </div>
+                      <Button onClick={cycleLanguage} variant="outline" className="border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300">
+                        <Globe size={16} className="mr-2" /> {t.langLabel} → Next
+                      </Button>
+                    </div>
+                  </Card>
+
+                  {/* About */}
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">About</h4>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                      BazaarOS is a multilingual AI-powered ERP built for Indian MSME merchants. It features voice-driven inventory management,
+                      automated sales tracking, khata (credit ledger) management, and intelligent business analytics — all powered by
+                      Google Gemini and Sarvam AI.
+                    </p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">Built for GenAI Hackathon 2026 · Team Linguaverse</p>
+                  </Card>
+                </div>
+              </div>
+            )}
+
             {/* VIEW: FALLBACK FOR OTHER TABS */}
-            {activeTab !== "dashboard" && activeTab !== "inventory" && activeTab !== "khata" && activeTab !== "sales" && (
+            {activeTab !== "dashboard" && activeTab !== "inventory" && activeTab !== "khata" && activeTab !== "sales" && activeTab !== "suppliers" && activeTab !== "orders" && activeTab !== "reports" && activeTab !== "settings" && (
               <div className="flex flex-col items-center justify-center h-96 text-zinc-400 dark:text-zinc-500 animate-in fade-in duration-500">
                 <Package size={48} className="mb-4 opacity-20" />
                 <p className="text-lg text-zinc-600 dark:text-zinc-400">The <strong className="text-zinc-900 dark:text-white">{getPageTitle()}</strong> {t.underDev}</p>
@@ -1087,7 +1415,15 @@ export default function Dashboard() {
             {/* Input Area */}
             <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
               <div className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-700 rounded-xl flex items-end p-2 transition-all focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
-                <Button variant="ghost" size="icon" className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white rounded-lg h-10 w-10 shrink-0">
+                <Button
+                  variant="ghost" size="icon"
+                  onMouseDown={startRecording}
+                  onMouseUp={stopRecording}
+                  onTouchStart={startRecording}
+                  onTouchEnd={stopRecording}
+                  disabled={isProcessingAudio}
+                  className={`rounded-lg h-10 w-10 shrink-0 transition-all ${isRecording ? 'bg-rose-500 text-white animate-pulse hover:bg-rose-600' : isProcessingAudio ? 'text-amber-500 animate-spin' : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'}`}
+                >
                   <Mic size={20} />
                 </Button>
                 <Textarea
