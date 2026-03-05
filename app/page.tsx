@@ -5,7 +5,8 @@ import {
   LayoutDashboard, Package, Wallet, Truck, Users, FileText,
   Settings, Mic, Send, AlertTriangle, Plus, Search,
   Bot, User, CheckCircle2, X, BarChart3, Receipt, FileSpreadsheet,
-  BookOpen
+  BookOpen, Bell, Globe, LogOut, PanelLeftClose, PanelLeftOpen,
+  Lock, ArrowRight, WifiOff
 } from "lucide-react"
 import { Button } from "@/components/shadcn_ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/shadcn_ui/card"
@@ -32,21 +33,77 @@ interface Message {
   action: MessageAction | null;
 }
 
+type LangLevel = "en" | "hi-essential" | "hi-full";
+
+// --- 3-TIER LOCALIZATION DICTIONARY ---
+const uiTranslations = {
+  "en": {
+    langLabel: "EN",
+    main: "MAIN", dashboard: "Dashboard", inventory: "Inventory", sales: "Sales", khata: "Khata (Udhaar)", orders: "Orders",
+    business: "BUSINESS", suppliers: "Suppliers", reports: "Reports", settings: "Settings", search: "Search apps or data...",
+    sysOverview: "System Overview", invController: "Inventory Controller", salesFinance: "Sales & Finance",
+    manageStock: "Manage Stock", lowStock: "Low Stock Alerts", createPo: "Create Purchase Order", supplierLedger: "Supplier Ledger", stockRecon: "Stock Reconciliation",
+    todaySales: "Today's Sales", manualSale: "Record Manual Sale", monthlyRev: "Monthly Revenue", pendingRec: "Pending Receivables",
+    masterInv: "Master Inventory", invDesc: "Manage your product catalog and stock levels.", addItem: "Add Item Manually",
+    khataTitle: "Khata (Customer Ledger)", khataDesc: "Track pending payments and customer credit (Udhaar).", newCust: "New Customer",
+    totOut: "Total Outstanding", activeAcc: "Active Khata Accounts", recThisWeek: "Recovered This Week",
+    recSales: "Recent Sales", recSalesDesc: "Live stream of all transactions.", recSaleBtn: "Record Sale",
+    underDev: "module is currently under development.", checkBack: "Check back later or use the AI Agent for tasks."
+  },
+  "hi-essential": {
+    langLabel: "HI (PARTIAL)",
+    main: "मुख्य (MAIN)", dashboard: "डैशबोर्ड", inventory: "स्टॉक (Inventory)", sales: "बिक्री (Sales)", khata: "खाता (Ledger)", orders: "ऑर्डर (Orders)",
+    business: "व्यापार (BUSINESS)", suppliers: "सप्लायर (Suppliers)", reports: "रिपोर्ट (Reports)", settings: "सेटिंग्स", search: "खोजें (Search)...",
+    sysOverview: "सिस्टम अवलोकन (System Overview)", invController: "Inventory Controller", salesFinance: "Sales & Finance",
+    manageStock: "Manage Stock", lowStock: "Low Stock Alerts", createPo: "Create Purchase Order", supplierLedger: "Supplier Ledger", stockRecon: "Stock Reconciliation",
+    todaySales: "Today's Sales", manualSale: "Record Manual Sale", monthlyRev: "Monthly Revenue", pendingRec: "Pending Receivables",
+    masterInv: "Master Inventory", invDesc: "Manage your product catalog and stock levels.", addItem: "Add Item Manually",
+    khataTitle: "Khata (Customer Ledger)", khataDesc: "Track pending payments and customer credit (Udhaar).", newCust: "New Customer",
+    totOut: "Total Outstanding", activeAcc: "Active Khata Accounts", recThisWeek: "Recovered This Week",
+    recSales: "Recent Sales", recSalesDesc: "Live stream of all transactions.", recSaleBtn: "Record Sale",
+    underDev: "मॉड्यूल अभी विकास में है। (under development)", checkBack: "बाद में देखें या एआई एजेंट का उपयोग करें।"
+  },
+  "hi-full": {
+    langLabel: "HI (FULL)",
+    main: "मुख्य", dashboard: "डैशबोर्ड", inventory: "स्टॉक / इन्वेंटरी", sales: "बिक्री", khata: "खाता (उधार)", orders: "ऑर्डर",
+    business: "व्यापार", suppliers: "सप्लायर", reports: "रिपोर्ट", settings: "सेटिंग्स", search: "ऐप्स या डेटा खोजें...",
+    sysOverview: "सिस्टम अवलोकन", invController: "स्टॉक नियंत्रण", salesFinance: "बिक्री और वित्त",
+    manageStock: "स्टॉक प्रबंधित करें", lowStock: "कम स्टॉक अलर्ट", createPo: "खरीद आदेश (PO) बनाएं", supplierLedger: "सप्लायर लेजर", stockRecon: "स्टॉक मिलान",
+    todaySales: "आज की बिक्री", manualSale: "मैनुअल सेल दर्ज करें", monthlyRev: "मासिक आय", pendingRec: "लंबित प्राप्तियां",
+    masterInv: "मुख्य इन्वेंटरी", invDesc: "अपने उत्पाद कैटलॉग और स्टॉक स्तरों का प्रबंधन करें।", addItem: "नया उत्पाद जोड़ें",
+    khataTitle: "खाता (ग्राहक लेजर)", khataDesc: "लंबित भुगतान और ग्राहक उधारी ट्रैक करें।", newCust: "नया ग्राहक",
+    totOut: "कुल बकाया", activeAcc: "सक्रिय खाते", recThisWeek: "इस सप्ताह वसूली",
+    recSales: "हाल की बिक्री", recSalesDesc: "सभी लेनदेन की लाइव स्ट्रीम।", recSaleBtn: "सेल दर्ज करें",
+    underDev: "मॉड्यूल अभी विकास में है।", checkBack: "बाद में देखें या कार्यों के लिए एआई एजेंट का उपयोग करें।"
+  }
+};
+
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState("dashboard"); // Navigation State
+  // --- CORE APP STATES ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Gateway Auth State
+  const [isOffline, setIsOffline] = useState(false); // Network Simulator State
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 }); // Mouse Trailer State
+
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [language, setLanguage] = useState<LangLevel>("en"); // 3-Tier Language State
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // Sidebar State
+  const t = uiTranslations[language];
+
   const [isAgentOpen, setIsAgentOpen] = useState(false);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Header Dropdown States
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   // --- MOCK STATE DATA ---
   const [stats, setStats] = useState({
-    todaySales: "₹8,240",
-    salesTrend: "+12%",
-    totalItems: 142,
-    lowStock: 3,
-    pendingOrders: 7,
-    monthlyRev: "₹1.2L"
+    todaySales: "₹8,240", salesTrend: "+12%", totalItems: 142,
+    lowStock: 3, pendingOrders: 7, monthlyRev: "₹1.2L"
   });
 
   const [inventoryList, setInventoryList] = useState([
@@ -71,11 +128,9 @@ export default function Dashboard() {
 
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: 1,
-      role: "system",
+      id: 1, role: "system",
       text: "Namaste! 3 items need restocking today. Dove Soap is down to 8 units. Should I order more?",
-      language: null,
-      action: null
+      language: null, action: null
     }
   ]);
 
@@ -84,139 +139,317 @@ export default function Dashboard() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAgentOpen, isTyping]);
 
-  // Handle sending message to API
+  // Override Edge/Chrome default Ctrl+K behavior
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const cycleLanguage = () => {
+    if (language === "en") setLanguage("hi-essential");
+    else if (language === "hi-essential") setLanguage("hi-full");
+    else setLanguage("en");
+  };
+
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
 
     const userText = inputText.trim();
-    const newUserMsg: Message = {
-      id: Date.now(),
-      role: "user",
-      text: userText,
-      language: "Hinglish",
-      action: null
-    };
+    const newUserMsg: Message = { id: Date.now(), role: "user", text: userText, language: "Hinglish", action: null };
 
     setMessages(prev => [...prev, newUserMsg]);
     setInputText("");
     setIsTyping(true);
 
-    // MOCK API CALL - Smart Mocking based on keywords
     setTimeout(() => {
       setIsTyping(false);
-
       const lowerText = userText.toLowerCase();
       let mockResponse: Message;
 
       if (lowerText.includes("sales") || lowerText.includes("bikri")) {
-        mockResponse = {
-          id: Date.now() + 1,
-          role: "agent",
-          text: `Aaj ki total sales ${stats.todaySales} hai. Pichle din se ${stats.salesTrend} zyada!`,
-          language: null,
-          action: null
-        };
+        mockResponse = { id: Date.now() + 1, role: "agent", text: `Aaj ki total sales ${stats.todaySales} hai. Pichle din se ${stats.salesTrend} zyada!`, language: null, action: null };
       } else if (lowerText.includes("lux") || lowerText.includes("add")) {
-        mockResponse = {
-          id: Date.now() + 1,
-          role: "agent",
-          text: "Samajh gaya! Main stock update kar deta hun. Please confirm karein:",
-          language: null,
-          action: { item: "Lux Soap 50g", qty: "+50", action: "ADD STOCK" }
-        };
+        mockResponse = { id: Date.now() + 1, role: "agent", text: "Samajh gaya! Main stock update kar deta hun. Please confirm karein:", language: null, action: { item: "Lux Soap 50g", qty: "+50", action: "ADD STOCK" } };
       } else {
-        mockResponse = {
-          id: Date.now() + 1,
-          role: "agent",
-          text: "Ji, main detail check kar raha hun. Aapko kuch specific dekhna hai?",
-          language: null,
-          action: null
-        };
+        mockResponse = { id: Date.now() + 1, role: "agent", text: "Ji, main detail check kar raha hun. Aapko kuch specific dekhna hai?", language: null, action: null };
       }
-
       setMessages(prev => [...prev, mockResponse]);
     }, 1500);
   };
 
+  const getPageTitle = () => {
+    switch (activeTab) {
+      case "dashboard": return t.sysOverview;
+      case "inventory": return t.inventory;
+      case "sales": return t.sales;
+      case "khata": return t.khata;
+      case "orders": return t.orders;
+      case "suppliers": return t.suppliers;
+      case "reports": return t.reports;
+      case "settings": return t.settings;
+      default: return activeTab;
+    }
+  };
+
+  // ==========================================
+  // VIEW: LOGIN GATEWAY
+  // ==========================================
+  if (!isAuthenticated) {
+    return (
+      <div
+        className="flex h-screen bg-zinc-950 items-center justify-center font-sans relative overflow-hidden"
+        onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+      >
+        {/* Ambient Glow Mouse Trailer Effect */}
+        <div
+          className="absolute w-[600px] h-[600px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none transition-all duration-500 ease-out z-0"
+          style={{
+            left: mousePos.x === 0 && mousePos.y === 0 ? '50%' : `${mousePos.x}px`,
+            top: mousePos.x === 0 && mousePos.y === 0 ? '50%' : `${mousePos.y}px`,
+            transform: 'translate(-50%, -50%)'
+          }}
+        ></div>
+
+        <Card className="w-[400px] bg-zinc-900/80 border-zinc-800 shadow-2xl z-10 backdrop-blur-xl">
+          <CardHeader className="text-center pb-6 border-b border-zinc-800/50">
+            <div className="mx-auto w-12 h-12 bg-indigo-500/10 rounded-xl flex items-center justify-center mb-4 border border-indigo-500/20">
+              <Lock className="text-indigo-400 w-6 h-6" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-white tracking-tight">Bazaar<span className="text-indigo-500">OS</span></CardTitle>
+            <CardDescription className="text-zinc-400">Secure access for your enterprise.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-zinc-300">Store ID / Phone Number</Label>
+                <Input id="email" placeholder="+91 98765 43210" className="bg-zinc-950 border-zinc-800 text-white focus-visible:ring-indigo-500" defaultValue="ravi.store@linguaverse.in" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="password" className="text-zinc-300">Password / OTP</Label>
+                  <span className="text-xs text-indigo-400 cursor-pointer hover:underline">Send OTP</span>
+                </div>
+                <Input id="password" type="password" placeholder="••••••••" className="bg-zinc-950 border-zinc-800 text-white focus-visible:ring-indigo-500" defaultValue="password123" />
+              </div>
+              <Button
+                onClick={() => setIsAuthenticated(true)}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white mt-2 group py-6 text-md font-semibold"
+              >
+                Secure Login <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Button>
+              <div className="text-center">
+                <p className="text-xs text-zinc-500 mt-2">Hackathon Demo: Just click login to proceed.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // ==========================================
+  // VIEW: MAIN APPLICATION DASHBOARD
+  // ==========================================
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-300 font-sans overflow-hidden">
+    <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans overflow-hidden relative">
+
+      {/* Ambient Glow Effect (Subtle for Main Dashboard) */}
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-600/5 rounded-full blur-[100px] pointer-events-none z-0"></div>
 
       {/* ================= LEFT SIDEBAR ================= */}
-      <aside className="w-64 border-r border-slate-800/60 bg-slate-900/50 flex flex-col shrink-0">
-        <div className="p-6">
-          <h1 className="text-2xl font-bold text-white tracking-tight">Bazaar<span className="text-indigo-500">OS</span></h1>
-          <p className="text-xs text-slate-500 uppercase tracking-wider mt-1">Multilingual ERP</p>
-        </div>
-
-        <div className="px-4 mb-6">
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 flex items-center gap-3">
-            <Avatar className="w-10 h-10 rounded-md">
-              <AvatarFallback className="bg-indigo-600 text-white font-bold rounded-md">R</AvatarFallback>
-            </Avatar>
+      <aside className={`z-10 ${isSidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800/60 bg-zinc-900/50 flex flex-col shrink-0 transition-all duration-300 ease-in-out`}>
+        <div className={`p-4 pb-2 border-b border-zinc-800/60 mb-4 flex ${isSidebarCollapsed ? 'flex-col items-center gap-4' : 'items-start justify-between'}`}>
+          {!isSidebarCollapsed ? (
             <div>
-              <p className="text-sm font-semibold text-white">Ravi Store</p>
-              <p className="text-xs text-slate-400">Chennai, TN</p>
+              <h1 className="text-2xl font-bold text-white tracking-tight">Bazaar<span className="text-indigo-500">OS</span></h1>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1 mb-2">Multilingual ERP</p>
             </div>
-          </div>
+          ) : (
+            <h1 className="text-2xl font-bold text-white tracking-tight mt-2">B<span className="text-indigo-500">OS</span></h1>
+          )}
+
+          <button
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Toggle Sidebar"
+          >
+            {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-          <p className="text-xs font-semibold text-slate-500 mb-2 mt-2 px-2">MAIN</p>
-          <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={activeTab === "dashboard"} onClick={() => setActiveTab("dashboard")} />
-          <NavItem icon={<Package size={18} />} label="Inventory" alert active={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} />
-          <NavItem icon={<Wallet size={18} />} label="Sales" active={activeTab === "sales"} onClick={() => setActiveTab("sales")} />
-          <NavItem icon={<BookOpen size={18} />} label="Khata (Udhaar)" active={activeTab === "khata"} onClick={() => setActiveTab("khata")} />
-          <NavItem icon={<Truck size={18} />} label="Orders" active={activeTab === "orders"} onClick={() => setActiveTab("orders")} />
+        <nav className="flex-1 px-3 space-y-1 overflow-y-auto overflow-x-hidden">
+          {isSidebarCollapsed ? (
+            <div className="h-px bg-zinc-800/60 w-8 mx-auto my-4"></div>
+          ) : (
+            <p className="text-xs font-semibold text-zinc-500 mb-2 mt-2 px-3">{t.main}</p>
+          )}
+          <NavItem icon={<LayoutDashboard size={18} />} label={t.dashboard} active={activeTab === "dashboard"} onClick={() => setActiveTab("dashboard")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<Package size={18} />} label={t.inventory} alert active={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<Wallet size={18} />} label={t.sales} active={activeTab === "sales"} onClick={() => setActiveTab("sales")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<BookOpen size={18} />} label={t.khata} active={activeTab === "khata"} onClick={() => setActiveTab("khata")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<Truck size={18} />} label={t.orders} active={activeTab === "orders"} onClick={() => setActiveTab("orders")} isCollapsed={isSidebarCollapsed} />
 
-          <p className="text-xs font-semibold text-slate-500 mb-2 mt-6 px-2">BUSINESS</p>
-          <NavItem icon={<Users size={18} />} label="Suppliers" active={activeTab === "suppliers"} onClick={() => setActiveTab("suppliers")} />
-          <NavItem icon={<FileText size={18} />} label="Reports" active={activeTab === "reports"} onClick={() => setActiveTab("reports")} />
-          <NavItem icon={<Settings size={18} />} label="Settings" active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
+          {isSidebarCollapsed ? (
+            <div className="h-px bg-zinc-800/60 w-8 mx-auto my-6"></div>
+          ) : (
+            <p className="text-xs font-semibold text-zinc-500 mb-2 mt-6 px-3">{t.business}</p>
+          )}
+          <NavItem icon={<Users size={18} />} label={t.suppliers} active={activeTab === "suppliers"} onClick={() => setActiveTab("suppliers")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<FileText size={18} />} label={t.reports} active={activeTab === "reports"} onClick={() => setActiveTab("reports")} isCollapsed={isSidebarCollapsed} />
+          <NavItem icon={<Settings size={18} />} label={t.settings} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} isCollapsed={isSidebarCollapsed} />
         </nav>
       </aside>
 
       {/* ================= CENTER PANEL ================= */}
-      <main className="flex-1 flex flex-col min-w-0 bg-slate-950 relative">
-        {/* Top Header */}
-        <header className="h-20 border-b border-slate-800/60 px-8 flex items-center justify-between shrink-0 bg-slate-950/80 backdrop-blur-md sticky top-0 z-10">
-          <h2 className="text-xl font-semibold text-white capitalize">{activeTab} Overview</h2>
-          <div className="flex items-center gap-4">
-            <div className="relative hidden md:block w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 z-10" />
+      <main className="flex-1 flex flex-col min-w-0 bg-transparent relative z-10">
+
+        {/* Offline Banner Indicator */}
+        {isOffline && (
+          <div className="w-full bg-rose-500/90 text-white text-xs font-bold text-center py-1 flex items-center justify-center gap-2 animate-in slide-in-from-top-2">
+            <WifiOff size={14} /> Working Offline - Local changes will sync automatically when connection is restored.
+          </div>
+        )}
+
+        {/* ================= GLOBAL TOP HEADER ================= */}
+        <header className={`h-20 border-b border-zinc-800/60 px-8 flex items-center justify-between shrink-0 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-10`}>
+
+          <div className="flex items-center gap-4 flex-1">
+            <h2 className="text-xl font-semibold text-white capitalize shrink-0 hidden lg:block transition-all mr-2">{getPageTitle()}</h2>
+            <div className="relative hidden md:block w-96">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 w-4 h-4 z-10" />
               <Input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Search apps or data..."
-                className="pl-9 bg-slate-900 border-slate-800 text-slate-300 rounded-full focus-visible:ring-indigo-500 h-9 text-sm"
+                placeholder={t.search}
+                className="peer pl-9 bg-zinc-900 border-zinc-800 text-zinc-300 rounded-full focus-visible:ring-indigo-500 h-10 text-sm w-full transition-all focus:w-[28rem]"
               />
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-1 peer-focus:opacity-0 pointer-events-none transition-opacity duration-200">
+                <kbd className="hidden sm:inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-800 px-1.5 font-mono text-[10px] font-medium text-zinc-400">Ctrl K</kbd>
+              </div>
             </div>
-            <span className="text-sm text-slate-400">Thu, 5 Mar 2026</span>
+          </div>
+
+          {/* Right: Actions & Profile */}
+          <div className="flex items-center gap-6">
+
+            {/* Action Icons */}
+            <div className="flex items-center gap-4 border-r border-zinc-800 pr-6">
+              {/* Language Toggle */}
+              <button
+                onClick={cycleLanguage}
+                className={`transition-colors flex items-center gap-2 text-sm font-bold px-3 py-1.5 rounded-full border ${language === 'en' ? 'border-zinc-800 text-zinc-400' : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'}`}
+                title="Toggle Language Level"
+              >
+                <Globe size={16} />
+                <span className="uppercase text-xs tracking-wider">{t.langLabel}</span>
+              </button>
+
+              {/* Notification Bell (Interactive) */}
+              <div className="relative">
+                <button onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }} className="text-zinc-400 hover:text-white transition-colors relative p-2">
+                  <Bell size={20} />
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border border-zinc-950"></span>
+                </button>
+
+                {/* Notification Dropdown */}
+                {isNotifOpen && (
+                  <div className="absolute right-0 mt-2 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                    <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+                      <span className="font-semibold text-white text-sm">Notifications</span>
+                      <span className="text-xs text-indigo-400 cursor-pointer hover:underline">Mark all read</span>
+                    </div>
+                    <div className="p-2">
+                      <div className="p-3 hover:bg-zinc-800/50 rounded-lg cursor-pointer transition-colors mb-1">
+                        <p className="text-sm text-zinc-200"><strong className="text-rose-400">Low Stock:</strong> Dove Soap 75g is down to 8 units.</p>
+                        <p className="text-xs text-zinc-500 mt-1">10 mins ago</p>
+                      </div>
+                      <div className="p-3 hover:bg-zinc-800/50 rounded-lg cursor-pointer transition-colors">
+                        <p className="text-sm text-zinc-200"><strong className="text-emerald-400">Payment:</strong> Suresh Tea Stall settled ₹4,500 due.</p>
+                        <p className="text-xs text-zinc-500 mt-1">1 hour ago</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Profile Menu (Interactive) */}
+            <div className="relative">
+              <div onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity">
+                <div
+                  className="text-right hidden sm:block"
+                  title="Click Network Status to toggle Offline Mode"
+                  onClick={(e) => { e.stopPropagation(); setIsOffline(!isOffline); }}
+                >
+                  <p className="text-sm font-semibold text-white leading-tight">Ravi Store</p>
+                  <p className={`text-xs font-bold ${isOffline ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {isOffline ? 'Offline' : 'Online'}
+                  </p>
+                </div>
+                <Avatar className="w-10 h-10 rounded-full border-2 border-zinc-800 hover:border-indigo-500 transition-colors">
+                  <AvatarFallback className="bg-indigo-600 text-white font-bold">R</AvatarFallback>
+                </Avatar>
+              </div>
+
+              {/* Profile Dropdown */}
+              {isProfileOpen && (
+                <div className="absolute right-0 mt-3 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                  <div className="p-4 border-b border-zinc-800">
+                    <p className="text-sm font-bold text-white">Ravi General Store</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">ravi.store@linguaverse.in</p>
+                  </div>
+                  <div className="p-2">
+                    <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-md transition-colors">
+                      <Settings size={16} /> Shop Settings
+                    </button>
+                    {/* Logout Button */}
+                    <button
+                      onClick={() => setIsAuthenticated(false)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-md transition-colors mt-1"
+                    >
+                      <LogOut size={16} /> Logout
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
         </header>
 
         {/* Scrollable Content Area */}
-        <ScrollArea className="flex-1 p-8">
+        <ScrollArea
+          className="flex-1 p-8"
+          onClick={() => { if (isNotifOpen) setIsNotifOpen(false); if (isProfileOpen) setIsProfileOpen(false); }}
+        >
 
           {/* VIEW: DASHBOARD (SAP CARDS) */}
           {activeTab === "dashboard" && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="mb-10">
-                <h3 className="text-lg font-medium text-white mb-4">Inventory Controller</h3>
+                <h3 className="text-lg font-medium text-white mb-4">{t.invController}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                  <SapCard title="Manage Stock" subtitle={`${stats.totalItems} Total Items`} icon={<Package />} onClick={() => setActiveTab("inventory")} />
-                  <SapCard title="Low Stock Alerts" subtitle={`${stats.lowStock} Items require attention`} icon={<AlertTriangle />} alert />
-                  <SapCard title="Create Purchase Order" icon={<Plus />} />
-                  <SapCard title="Supplier Ledger" subtitle="Pending dues: ₹4,200" icon={<Users />} />
-                  <SapCard title="Stock Reconciliation" icon={<FileSpreadsheet />} />
+                  <SapCard title={t.manageStock} subtitle={`${stats.totalItems} Items`} icon={<Package />} onClick={() => setActiveTab("inventory")} />
+                  <SapCard title={t.lowStock} subtitle={`${stats.lowStock} Items`} icon={<AlertTriangle />} alert />
+                  <SapCard title={t.createPo} icon={<Plus />} />
+                  <SapCard title={t.supplierLedger} subtitle="Dues: ₹4,200" icon={<Users />} />
+                  <SapCard title={t.stockRecon} icon={<FileSpreadsheet />} />
                 </div>
               </div>
 
               <div className="mb-10">
-                <h3 className="text-lg font-medium text-white mb-4">Sales & Finance</h3>
+                <h3 className="text-lg font-medium text-white mb-4">{t.salesFinance}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                  <SapCard title="Today's Sales" subtitle={`${stats.todaySales} (${stats.salesTrend})`} icon={<Wallet />} highlight />
-                  <SapCard title="Record Manual Sale" icon={<Receipt />} />
-                  <SapCard title="Monthly Revenue" subtitle={stats.monthlyRev} icon={<BarChart3 />} />
-                  <SapCard title="Pending Receivables" subtitle={`${stats.pendingOrders} Invoices`} icon={<FileText />} />
+                  <SapCard title={t.todaySales} subtitle={`${stats.todaySales} (${stats.salesTrend})`} icon={<Wallet />} highlight />
+                  <SapCard title={t.manualSale} icon={<Receipt />} />
+                  <SapCard title={t.monthlyRev} subtitle={stats.monthlyRev} icon={<BarChart3 />} />
+                  <SapCard title={t.pendingRec} subtitle={`${stats.pendingOrders} Invoices`} icon={<FileText />} />
                 </div>
               </div>
             </div>
@@ -227,36 +460,35 @@ export default function Dashboard() {
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h3 className="text-2xl font-semibold text-white">Master Inventory</h3>
-                  <p className="text-slate-400 text-sm">Manage your product catalog and stock levels.</p>
+                  <h3 className="text-2xl font-semibold text-white">{t.masterInv}</h3>
+                  <p className="text-zinc-400 text-sm">{t.invDesc}</p>
                 </div>
 
-                {/* Shadcn Dialog for adding stock manually */}
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button className="bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
-                      <Plus className="mr-2 h-4 w-4" /> Add Item Manually
+                      <Plus className="mr-2 h-4 w-4" /> {t.addItem}
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="sm:max-w-[425px] bg-slate-900 border-slate-700 text-white">
+                  <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-700 text-white">
                     <DialogHeader>
-                      <DialogTitle>Add New Item</DialogTitle>
-                      <DialogDescription className="text-slate-400">
+                      <DialogTitle>{t.addItem}</DialogTitle>
+                      <DialogDescription className="text-zinc-400">
                         Manually enter a new product to your inventory ledger. (Hint: It's faster to just tell the AI Agent to do this!)
                       </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="name" className="text-right text-slate-300">Name</Label>
-                        <Input id="name" placeholder="e.g. Parle-G 50g" className="col-span-3 bg-slate-950 border-slate-700" />
+                        <Label htmlFor="name" className="text-right text-zinc-300">Name</Label>
+                        <Input id="name" placeholder="e.g. Parle-G 50g" className="col-span-3 bg-zinc-950 border-zinc-700" />
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="sku" className="text-right text-slate-300">SKU</Label>
-                        <Input id="sku" placeholder="PAR-50G" className="col-span-3 bg-slate-950 border-slate-700" />
+                        <Label htmlFor="sku" className="text-right text-zinc-300">SKU</Label>
+                        <Input id="sku" placeholder="PAR-50G" className="col-span-3 bg-zinc-950 border-zinc-700" />
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="stock" className="text-right text-slate-300">Stock Qty</Label>
-                        <Input id="stock" type="number" placeholder="100" className="col-span-3 bg-slate-950 border-slate-700" />
+                        <Label htmlFor="stock" className="text-right text-zinc-300">Stock Qty</Label>
+                        <Input id="stock" type="number" placeholder="100" className="col-span-3 bg-zinc-950 border-zinc-700" />
                       </div>
                     </div>
                     <DialogFooter>
@@ -266,21 +498,21 @@ export default function Dashboard() {
                 </Dialog>
               </div>
 
-              <Card className="bg-slate-900/50 border-slate-800">
+              <Card className="bg-zinc-900/50 border-zinc-800">
                 <Table>
-                  <TableHeader className="bg-slate-900 hover:bg-slate-900">
-                    <TableRow className="border-slate-800">
-                      <TableHead className="w-[100px] text-slate-400">SKU</TableHead>
-                      <TableHead className="text-slate-400">Product Name</TableHead>
-                      <TableHead className="text-slate-400">Status</TableHead>
-                      <TableHead className="text-right text-slate-400">Price</TableHead>
-                      <TableHead className="text-right text-slate-400">Stock</TableHead>
+                  <TableHeader className="bg-zinc-900 hover:bg-zinc-900">
+                    <TableRow className="border-zinc-800">
+                      <TableHead className="w-[100px] text-zinc-400">SKU</TableHead>
+                      <TableHead className="text-zinc-400">Product Name</TableHead>
+                      <TableHead className="text-zinc-400">Status</TableHead>
+                      <TableHead className="text-right text-zinc-400">Price</TableHead>
+                      <TableHead className="text-right text-zinc-400">Stock</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {inventoryList.map((item) => (
-                      <TableRow key={item.sku} className="border-slate-800 hover:bg-slate-800/50">
-                        <TableCell className="font-medium text-slate-300">{item.sku}</TableCell>
+                      <TableRow key={item.sku} className="border-zinc-800 hover:bg-zinc-800/50">
+                        <TableCell className="font-medium text-zinc-300">{item.sku}</TableCell>
                         <TableCell className="text-white">{item.name}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={`
@@ -291,7 +523,7 @@ export default function Dashboard() {
                             {item.status}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right text-slate-300">{item.price}</TableCell>
+                        <TableCell className="text-right text-zinc-300">{item.price}</TableCell>
                         <TableCell className="text-right text-white font-medium">{item.stock}</TableCell>
                       </TableRow>
                     ))}
@@ -306,47 +538,47 @@ export default function Dashboard() {
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h3 className="text-2xl font-semibold text-white">Khata (Customer Ledger)</h3>
-                  <p className="text-slate-400 text-sm">Track pending payments and customer credit (Udhaar).</p>
+                  <h3 className="text-2xl font-semibold text-white">{t.khataTitle}</h3>
+                  <p className="text-zinc-400 text-sm">{t.khataDesc}</p>
                 </div>
                 <Button className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20">
-                  <Plus className="mr-2 h-4 w-4" /> New Customer
+                  <Plus className="mr-2 h-4 w-4" /> {t.newCust}
                 </Button>
               </div>
 
               <div className="grid grid-cols-3 gap-6 mb-8">
-                <Card className="bg-slate-900/50 border-slate-800 p-6 flex flex-col justify-center">
-                  <p className="text-slate-400 text-sm font-medium mb-1">Total Outstanding</p>
+                <Card className="bg-zinc-900/50 border-zinc-800 p-6 flex flex-col justify-center">
+                  <p className="text-zinc-400 text-sm font-medium mb-1">{t.totOut}</p>
                   <p className="text-3xl font-bold text-rose-400">₹6,070</p>
                 </Card>
-                <Card className="bg-slate-900/50 border-slate-800 p-6 flex flex-col justify-center">
-                  <p className="text-slate-400 text-sm font-medium mb-1">Active Khata Accounts</p>
+                <Card className="bg-zinc-900/50 border-zinc-800 p-6 flex flex-col justify-center">
+                  <p className="text-zinc-400 text-sm font-medium mb-1">{t.activeAcc}</p>
                   <p className="text-3xl font-bold text-white">24</p>
                 </Card>
-                <Card className="bg-slate-900/50 border-slate-800 p-6 flex flex-col justify-center">
-                  <p className="text-slate-400 text-sm font-medium mb-1">Recovered This Week</p>
+                <Card className="bg-zinc-900/50 border-zinc-800 p-6 flex flex-col justify-center">
+                  <p className="text-zinc-400 text-sm font-medium mb-1">{t.recThisWeek}</p>
                   <p className="text-3xl font-bold text-emerald-400">₹2,150</p>
                 </Card>
               </div>
 
-              <Card className="bg-slate-900/50 border-slate-800">
+              <Card className="bg-zinc-900/50 border-zinc-800">
                 <Table>
-                  <TableHeader className="bg-slate-900 hover:bg-slate-900">
-                    <TableRow className="border-slate-800">
-                      <TableHead className="text-slate-400">Customer Name</TableHead>
-                      <TableHead className="text-slate-400">Phone</TableHead>
-                      <TableHead className="text-slate-400">Last Activity</TableHead>
-                      <TableHead className="text-slate-400">Status</TableHead>
-                      <TableHead className="text-right text-slate-400">Balance Due</TableHead>
-                      <TableHead className="text-right text-slate-400">Action</TableHead>
+                  <TableHeader className="bg-zinc-900 hover:bg-zinc-900">
+                    <TableRow className="border-zinc-800">
+                      <TableHead className="text-zinc-400">Customer Name</TableHead>
+                      <TableHead className="text-zinc-400">Phone</TableHead>
+                      <TableHead className="text-zinc-400">Last Activity</TableHead>
+                      <TableHead className="text-zinc-400">Status</TableHead>
+                      <TableHead className="text-right text-zinc-400">Balance Due</TableHead>
+                      <TableHead className="text-right text-zinc-400">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {khataList.map((customer) => (
-                      <TableRow key={customer.id} className="border-slate-800 hover:bg-slate-800/50">
+                      <TableRow key={customer.id} className="border-zinc-800 hover:bg-zinc-800/50">
                         <TableCell className="font-medium text-white">{customer.name}</TableCell>
-                        <TableCell className="text-slate-300">{customer.phone}</TableCell>
-                        <TableCell className="text-slate-400 text-sm">{customer.lastActive}</TableCell>
+                        <TableCell className="text-zinc-300">{customer.phone}</TableCell>
+                        <TableCell className="text-zinc-400 text-sm">{customer.lastActive}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={customer.status === 'Overdue' ? 'text-rose-400 border-rose-500/20 bg-rose-500/10' : 'text-amber-400 border-amber-500/20 bg-amber-500/10'}>
                             {customer.status}
@@ -354,7 +586,7 @@ export default function Dashboard() {
                         </TableCell>
                         <TableCell className="text-right text-rose-400 font-bold">{customer.balance}</TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" variant="outline" className="border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white">Settle Due</Button>
+                          <Button size="sm" variant="outline" className="border-zinc-700 text-black-300 hover:bg-zinc-800 hover:text-white">Settle Due</Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -369,30 +601,30 @@ export default function Dashboard() {
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h3 className="text-2xl font-semibold text-white">Recent Sales</h3>
-                  <p className="text-slate-400 text-sm">Live stream of all transactions.</p>
+                  <h3 className="text-2xl font-semibold text-white">{t.recSales}</h3>
+                  <p className="text-zinc-400 text-sm">{t.recSalesDesc}</p>
                 </div>
                 <Button className="bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20">
-                  <Receipt className="mr-2 h-4 w-4" /> Record Sale
+                  <Receipt className="mr-2 h-4 w-4" /> {t.recSaleBtn}
                 </Button>
               </div>
 
-              <Card className="bg-slate-900/50 border-slate-800">
+              <Card className="bg-zinc-900/50 border-zinc-800">
                 <Table>
-                  <TableHeader className="bg-slate-900 hover:bg-slate-900">
-                    <TableRow className="border-slate-800">
-                      <TableHead className="w-[120px] text-slate-400">Invoice</TableHead>
-                      <TableHead className="text-slate-400">Items Sold</TableHead>
-                      <TableHead className="text-slate-400">Payment Type</TableHead>
-                      <TableHead className="text-slate-400">Time</TableHead>
-                      <TableHead className="text-right text-slate-400">Total Amount</TableHead>
+                  <TableHeader className="bg-zinc-900 hover:bg-zinc-900">
+                    <TableRow className="border-zinc-800">
+                      <TableHead className="w-[120px] text-zinc-400">Invoice</TableHead>
+                      <TableHead className="text-zinc-400">Items Sold</TableHead>
+                      <TableHead className="text-zinc-400">Payment Type</TableHead>
+                      <TableHead className="text-zinc-400">Time</TableHead>
+                      <TableHead className="text-right text-zinc-400">Total Amount</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {salesList.map((sale) => (
-                      <TableRow key={sale.id} className="border-slate-800 hover:bg-slate-800/50">
-                        <TableCell className="font-medium text-slate-300">{sale.id}</TableCell>
-                        <TableCell className="text-slate-200">{sale.items}</TableCell>
+                      <TableRow key={sale.id} className="border-zinc-800 hover:bg-zinc-800/50">
+                        <TableCell className="font-medium text-zinc-300">{sale.id}</TableCell>
+                        <TableCell className="text-zinc-200">{sale.items}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={
                             sale.type.includes('Khata') ? 'text-amber-400 border-amber-500/20 bg-amber-500/10' :
@@ -402,7 +634,7 @@ export default function Dashboard() {
                             {sale.type}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-slate-400 text-sm">{sale.time}</TableCell>
+                        <TableCell className="text-zinc-400 text-sm">{sale.time}</TableCell>
                         <TableCell className="text-right text-white font-bold">{sale.total}</TableCell>
                       </TableRow>
                     ))}
@@ -414,10 +646,10 @@ export default function Dashboard() {
 
           {/* VIEW: FALLBACK FOR OTHER TABS */}
           {activeTab !== "dashboard" && activeTab !== "inventory" && activeTab !== "khata" && activeTab !== "sales" && (
-            <div className="flex flex-col items-center justify-center h-96 text-slate-500 animate-in fade-in duration-500">
+            <div className="flex flex-col items-center justify-center h-96 text-zinc-500 animate-in fade-in duration-500">
               <Package size={48} className="mb-4 opacity-20" />
-              <p className="text-lg">The <strong>{activeTab}</strong> module is currently under development.</p>
-              <p className="text-sm">Check back later or use the AI Agent for tasks.</p>
+              <p className="text-lg">The <strong>{getPageTitle()}</strong> {t.underDev}</p>
+              <p className="text-sm">{t.checkBack}</p>
             </div>
           )}
 
@@ -428,9 +660,9 @@ export default function Dashboard() {
 
       {/* 1. The Popup Window */}
       {isAgentOpen && (
-        <Card className="fixed bottom-24 right-8 w-[400px] h-[600px] bg-slate-900 border-slate-700 shadow-2xl flex flex-col z-50 overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-200">
+        <Card className="fixed bottom-24 right-8 w-[400px] h-[600px] bg-zinc-900 border-zinc-700 shadow-2xl flex flex-col z-50 overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-200">
           {/* Header */}
-          <div className="h-16 border-b border-slate-800 bg-slate-900/80 px-4 flex items-center justify-between shrink-0">
+          <div className="h-16 border-b border-zinc-800 bg-zinc-900/80 px-4 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400">
                 <Bot size={20} />
@@ -443,13 +675,13 @@ export default function Dashboard() {
                 </Badge>
               </div>
             </div>
-            <button onClick={() => setIsAgentOpen(false)} className="text-slate-400 hover:text-white p-2">
+            <button onClick={() => setIsAgentOpen(false)} className="text-zinc-400 hover:text-white p-2">
               <X size={20} />
             </button>
           </div>
 
           {/* Chat History */}
-          <ScrollArea className="flex-1 p-4 bg-slate-950/50">
+          <ScrollArea className="flex-1 p-4 bg-zinc-950/50">
             <div className="space-y-5 pb-4">
               {messages.map((msg) => (
                 msg.role === "user" ? (
@@ -464,7 +696,7 @@ export default function Dashboard() {
                 )
               ))}
               {isTyping && (
-                <div className="flex items-center gap-2 text-slate-500 text-sm p-2 animate-pulse">
+                <div className="flex items-center gap-2 text-zinc-500 text-sm p-2 animate-pulse">
                   <Bot size={16} /> AI is thinking...
                 </div>
               )}
@@ -473,9 +705,9 @@ export default function Dashboard() {
           </ScrollArea>
 
           {/* Input Area */}
-          <div className="p-4 border-t border-slate-800 bg-slate-900">
-            <div className="bg-slate-950 border border-slate-700 rounded-xl flex items-end p-2 transition-all focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
-              <Button variant="ghost" size="icon" className="text-slate-400 hover:text-white rounded-lg h-10 w-10 shrink-0">
+          <div className="p-4 border-t border-zinc-800 bg-zinc-900">
+            <div className="bg-zinc-950 border border-zinc-700 rounded-xl flex items-end p-2 transition-all focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+              <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-white rounded-lg h-10 w-10 shrink-0">
                 <Mic size={20} />
               </Button>
               <Textarea
@@ -506,7 +738,7 @@ export default function Dashboard() {
       {/* 2. The Floating Action Button (FAB) */}
       <button
         onClick={() => setIsAgentOpen(!isAgentOpen)}
-        className={`fixed bottom-8 right-8 h-14 w-14 rounded-full flex items-center justify-center shadow-indigo-500/20 shadow-2xl transition-all duration-300 z-50 border-2 ${isAgentOpen ? 'bg-slate-800 border-slate-700 text-slate-300 scale-90' : 'bg-indigo-600 hover:bg-indigo-500 border-indigo-400 text-white hover:scale-105'}`}
+        className={`fixed bottom-8 right-8 h-14 w-14 rounded-full flex items-center justify-center shadow-indigo-500/20 shadow-2xl transition-all duration-300 z-50 border-2 ${isAgentOpen ? 'bg-zinc-800 border-zinc-700 text-zinc-300 scale-90' : 'bg-indigo-600 hover:bg-indigo-500 border-indigo-400 text-white hover:scale-105'}`}
       >
         {isAgentOpen ? <X size={24} /> : <Bot size={28} />}
       </button>
@@ -517,30 +749,35 @@ export default function Dashboard() {
 
 // --- HELPER COMPONENTS ---
 
-function NavItem({ icon, label, active, alert, onClick }: any) {
+function NavItem({ icon, label, active, alert, onClick, isCollapsed }: any) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg mb-1 transition-colors ${active ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`}>
-      <div className="flex items-center gap-3">
+    <button
+      onClick={onClick}
+      title={isCollapsed ? label : undefined}
+      className={`relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-3'} py-2.5 rounded-lg mb-1 transition-colors ${active ? 'bg-indigo-500/10 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-white'}`}
+    >
+      <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'}`}>
         {icon}
-        <span className="font-medium text-sm">{label}</span>
+        {!isCollapsed && <span className="font-medium text-sm">{label}</span>}
       </div>
-      {alert && <div className="w-2 h-2 rounded-full bg-rose-500"></div>}
+      {!isCollapsed && alert && <div className="w-2 h-2 rounded-full bg-rose-500"></div>}
+      {isCollapsed && alert && <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500 border border-zinc-900"></div>}
     </button>
   )
 }
 
 function SapCard({ title, subtitle, icon, alert, highlight, onClick }: any) {
   return (
-    <Card onClick={onClick} className={`relative group h-36 flex flex-col justify-between transition-all duration-200 bg-slate-800/40 hover:bg-slate-800 border-slate-700/50 hover:border-slate-600 ${onClick ? 'cursor-pointer' : ''} ${highlight ? 'border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : ''}`}>
+    <Card onClick={onClick} className={`relative group h-36 flex flex-col justify-between transition-all duration-300 bg-zinc-800/40 hover:bg-zinc-800 border-zinc-700/50 hover:border-zinc-500 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/40 ${onClick ? 'cursor-pointer' : ''} ${highlight ? 'border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : ''}`}>
       {alert && <div className="absolute top-0 right-0 w-3 h-3 bg-rose-500 rounded-full -mt-1 -mr-1 shadow-[0_0_10px_rgba(244,63,94,0.5)] z-10"></div>}
 
       <CardHeader className="p-5 pb-0">
-        <CardTitle className="text-sm font-semibold text-slate-200 group-hover:text-white transition-colors">{title}</CardTitle>
-        {subtitle && <CardDescription className="text-xs text-slate-400 mt-1">{subtitle}</CardDescription>}
+        <CardTitle className="text-sm font-semibold text-zinc-200 group-hover:text-white transition-colors">{title}</CardTitle>
+        {subtitle && <CardDescription className="text-xs text-zinc-400 mt-1">{subtitle}</CardDescription>}
       </CardHeader>
 
       <CardContent className="p-5 pt-0 flex justify-start items-end flex-1">
-        <div className={`${highlight ? 'text-indigo-400' : 'text-slate-500'} group-hover:scale-110 transition-transform origin-bottom-left`}>
+        <div className={`${highlight ? 'text-indigo-400' : 'text-zinc-500'} group-hover:scale-110 transition-transform origin-bottom-left`}>
           {icon}
         </div>
       </CardContent>
@@ -551,25 +788,25 @@ function SapCard({ title, subtitle, icon, alert, highlight, onClick }: any) {
 function AgentMessage({ message, type, action }: any) {
   return (
     <div className="flex gap-3">
-      <Avatar className="w-8 h-8 mt-1 border border-slate-700/50">
+      <Avatar className="w-8 h-8 mt-1 border border-zinc-700/50">
         <AvatarFallback className={`text-xs ${type === 'success' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
           {type === 'success' ? <CheckCircle2 size={16} /> : <Bot size={16} />}
         </AvatarFallback>
       </Avatar>
 
       <div className="flex-1">
-        <div className="bg-slate-800/80 border border-slate-700/50 p-3 rounded-2xl rounded-tl-none text-sm text-slate-200 leading-relaxed shadow-sm">
+        <div className="bg-zinc-800/80 border border-zinc-700/50 p-3 rounded-2xl rounded-tl-none text-sm text-zinc-200 leading-relaxed shadow-sm">
           {message}
           {action && (
-            <Card className="mt-3 p-3 bg-slate-900 border-slate-700">
-              <p className="text-xs text-slate-500 mb-1">{action.action}</p>
+            <Card className="mt-3 p-3 bg-zinc-900 border-zinc-700">
+              <p className="text-xs text-zinc-500 mb-1">{action.action}</p>
               <div className="flex justify-between font-medium text-white">
                 <span>{action.item}</span>
                 <span className="text-emerald-400">{action.qty}</span>
               </div>
               <div className="flex gap-2 mt-3">
                 <Button size="sm" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs">Confirm</Button>
-                <Button size="sm" variant="outline" className="w-full border-slate-600 text-slate-300 h-8 text-xs hover:bg-slate-800">Cancel</Button>
+                <Button size="sm" variant="outline" className="w-full border-zinc-600 text-zinc-300 h-8 text-xs hover:bg-zinc-800">Cancel</Button>
               </div>
             </Card>
           )}
@@ -582,12 +819,12 @@ function AgentMessage({ message, type, action }: any) {
 function UserMessage({ message, language }: any) {
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2 items-center text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">
+      <div className="flex gap-2 items-center text-[10px] uppercase tracking-wider text-zinc-500 mb-0.5">
         <Mic size={10} /> {language}
       </div>
       <div className="flex gap-3 flex-row-reverse">
-        <Avatar className="w-8 h-8 mt-1 border border-slate-700/50">
-          <AvatarFallback className="bg-slate-800 text-slate-400 text-xs">
+        <Avatar className="w-8 h-8 mt-1 border border-zinc-700/50">
+          <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs">
             <User size={16} />
           </AvatarFallback>
         </Avatar>
