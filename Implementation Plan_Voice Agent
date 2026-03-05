@@ -1,0 +1,91 @@
+# SARVAM VOICE INTEGRATION PLAN
+
+## 1. Pre-integration Diagnostic Answers
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Where exactly is the VoiceButton component? | **Inline in `page.tsx`**. There is no separate `VoiceButton.tsx` file. It's an inline `<Button>` containing `<Mic size={20} />` at line 1090. |
+| 2 | What callback does VoiceButton currently expose? | **None**. It's just a static UI button inside `page.tsx` right now. |
+| 3 | Does AgentPanel currently import VoiceButton? | **No**. The entire "AgentPanel" and the Mic button are directly rendered inside the main `Dashboard` function in `page.tsx`. |
+| 4 | Where is the send logic triggered? | In `page.tsx` on the Send `<Button>` click (line 1107) and the `<Textarea>` `onKeyDown` Enter event (line 1099). Both call `handleSendMessage()`. |
+| 5 | Is there a `sarvam.ts` file? | **No**. Only `api.ts` and `utils.ts` exist in `frontend/lib/`. |
+| 6 | Exact variable name for API key? | `NEXT_PUBLIC_SARVAM_API_KEY` in `frontend/.env.local`. |
+
+---
+
+## 2. Files to Create: `frontend/lib/sarvam.ts`
+
+**Implementation details:**
+We will create this file to house `sarvamSTT()` and `sarvamTTS()`.
+
+- `sarvamSTT(audioBlob, languageCode)`: Maps user language preference to Sarvam codes (`hi-IN`, `ta-IN`), posts `FormData` to `https://api.sarvam.ai/speech-to-text`, returns transcript. Includes an 8-second timeout.
+- `sarvamTTS(text, languageCode)`: Posts JSON to `https://api.sarvam.ai/text-to-speech`, decodes the returned `base64` audio string into an `AudioBuffer`, and plays it via the `AudioContext` Web API. Includes an 8-second timeout. Fails gracefully if the browser blocks autoplay.
+
+---
+
+## 3. Files to Modify: `frontend/app/page.tsx`
+
+**Minimal Surgical Changes:**
+
+**Change 1: Language Detection Helper**
+We will add a helper to detect Devanagari (Hindi) or Tamil characters in the input text to dynamically set the language code for the Sarvam APIs.
+
+**Change 2: Audio Recording State & Logic**
+```typescript
+const [isRecording, setIsRecording] = useState(false);
+const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+const audioChunksRef = useRef<Blob[]>([]);
+```
+Add `startRecording` and `stopRecording` functions using `navigator.mediaDevices.getUserMedia`. 
+
+**Change 3: Wiring the Mic Button**
+Update the inline Mic button at line 1090:
+- Use `onMouseDown`/`onTouchStart` to `startRecording()`.
+- Use `onMouseUp`/`onTouchEnd` to `stopRecording()`.
+- Change color to red/pulse when `isRecording` is true.
+
+**Change 4: STT to Chat Loop (`stopRecording`)**
+When recording stops, upload the blob via `sarvamSTT()`. On success, set `inputText` and trigger `handleSendMessage()`.
+
+**Change 5: Chat Loop to TTS**
+Modify `handleReadAction` and `handleSendMessage` (for the clarify/unknown branches) to pass the `response_text` to `sarvamTTS()` after updating the UI. Wait for the audio to finish playing before allowing the next voice input. *Crucially, if the API fails, catch the error silently so the text is still readable.*
+
+---
+
+## 4. End-to-End Wiring
+
+`Microphone Press` → `MediaRecorder` buffers WebM audio → `Microphone Release` → `sarvamSTT(blob)` → Transcript received → `setInputText(transcript)` → `handleSendMessage()` triggers Agent Flow → UI Updates → Agent Response Generated → `sarvamTTS(response.text)` → `AudioContext` plays `.wav` output → Merchant hears response.
+
+---
+
+## 5. Environment Variable Setup
+
+The `frontend/.env.local` file already has `NEXT_PUBLIC_SARVAM_API_KEY=your_key_here`.
+I will ensure it is correctly accessed via `process.env.NEXT_PUBLIC_SARVAM_API_KEY` inside `lib/sarvam.ts`.
+
+---
+
+## 6. Testing Steps
+
+| Flow | Steps to Test | Expected Result |
+|---|---|---|
+| Flow 1 (Stock Update) | Hold Mic → say "10 lux soap aaya" | Agent replies via text, Confirm Card shows up. TTS does **not** play automatically on confirmation actions to avoid annoying the user. |
+| Flow 2 (Sale) | Hold Mic → say "das colgate becha char sau mein" | Confirm Card appears. Confirm button writes to DB. |
+| Flow 3 (Voice Query) | Hold Mic → say "aaj kitna hua" | Agent fetches today's report and TTS **speaks** the result ("Aaj ka total..."). |
+| Flow 4 (Tamil Input) | Change language to Tamil, hold Mic → say "soap evvalavu irukku" | `ta-IN` used for STT. Agent reads stock, TTS responds in Tamil. |
+| Flow 5 (Clarification) | Hold Mic → say "kuch karo" | Agent parses as `clarify`, text shows up, TTS asks "Kya karna hai?" |
+
+---
+
+## 7. Fallback Behaviors
+
+| Scenario | Fallback Behavior Implemented |
+|---|---|
+| Mic Permission Denied | Show specific error in chat, hide mic button or disable it. |
+| STT Fails/Timeout | Clear loading state, show "Voice unavailable. Please type." in chat bubble. Text input remains active. |
+| TTS Fails/Timeout | Silent fallback. Text bubble is already rendered. Catch error and `console.error` it. |
+| Browser lacks Web Audio | Silent fallback for TTS. Browser lacks `MediaRecorder` → Mic button disabled on load. |
+
+## 8. Files NOT Touched
+Everything in `/backend/`, `/components/shadcn_ui`, `api.ts`, and core layout files.

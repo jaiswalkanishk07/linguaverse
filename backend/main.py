@@ -11,13 +11,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS Configuration — reads allowed origins from env or defaults to localhost
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-origins = [origin.strip() for origin in frontend_url.split(",")]
-
+# CORS Configuration — open for hackathon demo
+# In production, restrict to specific domains via FRONTEND_URL env var
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

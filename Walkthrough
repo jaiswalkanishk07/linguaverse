@@ -1,0 +1,60 @@
+# Walkthrough — Red Team Audit Fixes
+
+## Summary
+
+Applied **14 minimal, surgical fixes** across **11 files** to harden the Linguaverse MSME backend for production. No architecture was redesigned, no frameworks were replaced, no working pipelines were rewritten.
+
+---
+
+## Changes Made
+
+### 🔴 Critical Fixes
+
+| # | Fix | File |
+|---|---|---|
+| 1 | Added proper `.gitignore` (`.env`, `venv/`, `__pycache__/`, IDE files) | [.gitignore](file:///Users/vaxdsav/lignuaverse/.gitignore) |
+| 2 | `DATABASE_URL` now fails fast with `RuntimeError` if missing | [database.py](file:///Users/vaxdsav/lignuaverse/backend/database.py) |
+| 3 | `GEMINI_API_KEY` now fails fast with `RuntimeError` if missing | [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py) |
+| 4 | `AgentResponse.action` changed from `str` → `AgentAction` enum | [schemas.py](file:///Users/vaxdsav/lignuaverse/backend/schemas.py) |
+| 5 | Connection pool configured (`pool_size=10`, `max_overflow=20`, `pool_pre_ping`, `pool_recycle=300`) | [database.py](file:///Users/vaxdsav/lignuaverse/backend/database.py) |
+
+### 🟡 High/Medium Fixes
+
+| # | Fix | File(s) |
+|---|---|---|
+| 6 | Gemini API 15s timeout added | [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py) |
+| 7 | `get_db()` centralized — removed 6 duplicate definitions | All route files |
+| 8 | `db.refresh(product)` added after commit in `record_sale` | [tools.py](file:///Users/vaxdsav/lignuaverse/backend/tools.py) |
+| 9 | `joinedload(Sale.product)` eliminates N+1 queries | [routes/sales.py](file:///Users/vaxdsav/lignuaverse/backend/routes/sales.py) |
+| 10 | Pagination (`skip`/`limit`) on inventory, khata, suppliers, orders | 3 route files |
+| 11 | RAG context capped (100 products, 50 khatas) | [rag.py](file:///Users/vaxdsav/lignuaverse/backend/rag.py) |
+| 12 | User message wrapped in `<user_input>` delimiters + explicit enum instruction | [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py) |
+| 13 | `print()` → `logging.getLogger(__name__)` | [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py), [routes/agent.py](file:///Users/vaxdsav/lignuaverse/backend/routes/agent.py) |
+| 14 | CORS reads `FRONTEND_URL` from env, supports comma-separated origins | [main.py](file:///Users/vaxdsav/lignuaverse/backend/main.py) |
+
+---
+
+## Test Results
+
+All endpoints tested after applying fixes — **server auto-reloaded successfully**:
+
+| Endpoint | Status | Notes |
+|---|---|---|
+| `GET /` | ✅ | Health check returns `{"status": "online"}` |
+| `GET /inventory/?shop_id=shop_01&limit=2` | ✅ | Returns `total_items: 5, showing: 2` — pagination works |
+| `GET /sales/?shop_id=shop_01` | ✅ | Returns product names via joinedload (no N+1) |
+| `GET /khata/?shop_id=shop_01&limit=2` | ✅ | Returns 2 accounts with `skip`/`limit` metadata |
+| `GET /suppliers/?shop_id=shop_01` | ✅ | Returns 3 suppliers with pagination metadata |
+| `GET /reports/summary?shop_id=shop_01` | ✅ | P&L, top products, GST all correct |
+| `GET /reports/analytics?shop_id=shop_01` | ✅ | Low stock alerts + sales trend working |
+
+---
+
+## Remaining Recommendations (Not Implemented — Require User Decision)
+
+These items were identified in the audit but require business decisions before implementation:
+
+1. **Rotate all exposed secrets** — Database password and Gemini API key are in git history. Rotate them in Supabase dashboard and Google Cloud Console.
+2. **Add authentication** — Currently all endpoints are public. Recommend API key middleware or JWT.
+3. **Add rate limiting** — `slowapi` recommended for Gemini API cost protection.
+4. **Multi-worker production deploy** — Use `uvicorn --workers 4` instead of `--reload`.

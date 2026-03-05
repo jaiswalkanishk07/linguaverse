@@ -1,0 +1,392 @@
+# SYSTEM INTEGRATION PLAN — Linguaverse Hackathon Demo
+
+---
+
+## 1. Current System Overview
+
+### Backend (FastAPI) — ✅ Functional
+```
+STT → Agent Route → RAG Context → Gemini Flash → JSON Action → Backend Tools → PostgreSQL → Response
+```
+
+| Component | Status | File |
+|---|---|---|
+| FastAPI app + CORS | ✅ Working | [main.py](file:///Users/vaxdsav/lignuaverse/backend/main.py) |
+| Agent pipeline (Gemini) | ✅ Working | [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py) |
+| RAG context builder | ✅ Working | [rag.py](file:///Users/vaxdsav/lignuaverse/backend/rag.py) |
+| DB + Connection pool | ✅ Working | [database.py](file:///Users/vaxdsav/lignuaverse/backend/database.py) |
+| Business logic (tools) | ✅ Working | [tools.py](file:///Users/vaxdsav/lignuaverse/backend/tools.py) |
+| All 6 route files | ✅ Working | `routes/` |
+| Pydantic schemas | ✅ Working | [schemas.py](file:///Users/vaxdsav/lignuaverse/backend/schemas.py) |
+| Seed data | ✅ Working | [seed.py](file:///Users/vaxdsav/lignuaverse/backend/seed.py) |
+
+### Frontend (Next.js) — ⚠️ 100% Mock Data
+
+> [!CAUTION]
+> The frontend has **ZERO API calls**. Every piece of data is hardcoded:
+
+| What | Current State | Location in `page.tsx` |
+|---|---|---|
+| Dashboard stats | Hardcoded `useState` | Lines 118–121 |
+| Inventory table | Hardcoded array (5 items) | Lines 123–129 |
+| Khata ledger | Hardcoded array (3 customers) | Lines 131–135 |
+| Sales list | Hardcoded array (3 sales) | Lines 137–141 |
+| AI chat `handleSendMessage` | `setTimeout` with mock response | Lines 177–201 |
+
+**What works in the frontend**: Login screen, sidebar nav, dark/light theme, 4-language UI localization (EN/HI-partial/HI-full/TA), AI chat popup UI, all shadcn components.
+
+### Contract Gap Analysis
+
+| Backend Returns | Frontend Expects | Gap |
+|---|---|---|
+| `AgentResponse.action` = `AgentAction` enum (`update_stock` / `record_sale` / `khata_payment` / `unknown`) | `MessageAction.action` = free string | Frontend `MessageAction` interface must be updated |
+| Products: `{ name, sku, quantity, unit_price, category, low_stock_threshold }` | Inventory: `{ sku, name, stock, price, status }` | Need field mapping |
+| Khata: `{ customer_name, phone, outstanding_balance, days_overdue }` | Khata: `{ name, phone, balance, lastActive, status }` | Need field mapping |
+| Sales: `{ product_name, sku, qty_sold, amount, created_by, created_at }` | Sales: `{ id, items, total, type, time }` | Need field mapping |
+
+---
+
+## 2. Minimal Integration Steps — Priority Order
+
+### Priority 1 — Config (must happen first)
+
+| # | Task | File | Effort |
+|---|---|---|---|
+| 1 | Create `frontend/.env.local` with `NEXT_PUBLIC_BACKEND_URL` and `NEXT_PUBLIC_SHOP_ID` | [NEW] `.env.local` | 1 min |
+| 2 | Create `lib/api.ts` — single API helper with base URL, timeout, error handling | [NEW] `lib/api.ts` | 5 min |
+| 3 | Update backend CORS to allow `*.vercel.app` for demo | [MODIFY] `main.py` or `.env` | 2 min |
+
+### Priority 2 — Data Integration (replace mock data with live API)
+
+| # | Task | File | Effort |
+|---|---|---|---|
+| 4 | Replace hardcoded inventory with `GET /inventory/` fetch | [MODIFY] `page.tsx` | 10 min |
+| 5 | Replace hardcoded khata with `GET /khata/` fetch | [MODIFY] `page.tsx` | 10 min |
+| 6 | Replace hardcoded sales with `GET /sales/` fetch | [MODIFY] `page.tsx` | 10 min |
+| 7 | Replace hardcoded dashboard stats with `GET /reports/summary` + `/analytics` | [MODIFY] `page.tsx` | 10 min |
+| 8 | Replace `handleSendMessage` setTimeout with `POST /agent/parse` | [MODIFY] `page.tsx` | 15 min |
+
+### Priority 3 — Sarvam Voice Integration (if time permits)
+
+| # | Task | File | Effort |
+|---|---|---|---|
+| 9 | Add Sarvam STT on Mic button press | [MODIFY] `page.tsx` | 20 min |
+| 10 | Add Sarvam TTS on agent response | [MODIFY] `page.tsx` | 15 min |
+
+---
+
+## 3. Backend Adjustments — Config Changes Only
+
+### 3.1 CORS — Add Vercel Wildcard *(Critical for demo)*
+
+In `.env`, add:
+```
+FRONTEND_URL=http://localhost:3000,https://*.vercel.app
+```
+
+> [!WARNING]
+> `*.vercel.app` wildcard requires regex-based origin matching. The current `CORSMiddleware` does **not** support wildcards natively. The simplest demo-safe fix is to explicitly add the deployed Vercel URL, or temporarily use `allow_origins=["*"]` for the demo.
+
+**Recommended approach for demo:**
+```python
+# main.py — simplest safe approach for hackathon
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Open for demo, restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+### 3.2 Agent System Prompt — Add Multilingual Number Support
+
+Add to [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py) system instruction:
+```
+9. MULTILINGUAL NUMBERS: Convert Hindi/Hinglish numbers to digits:
+   ek=1, do=2, teen=3, char=4, panch=5, chhah=6, saat=7, aath=8, nau=9
+   dus=10, bees=20, tees=30, chaalees=40, pachaas=50, saath=60, sattar=70, assi=80, nabbe=90
+   sau=100, hazaar=1000, lakh=100000
+   If words like "thoda" or "bahut" are used without a specific number, return action: "unknown" and ask for exact quantity.
+10. LANGUAGE MATCHING: Your 'response_text' MUST be in the same language the merchant used. If they spoke Hindi, reply in Hindi. If Tamil, reply in Tamil-English mix. If English, reply in English.
+```
+
+### 3.3 Shop ID — Use `MSME_HQ_001` or match seed data
+
+Current seed uses `shop_01`. The prompt specifies `MSME_HQ_001`.
+
+> [!IMPORTANT]
+> **Decision needed**: Either update `SHOP_ID` in `.env` and re-seed with `MSME_HQ_001`, or keep `shop_01` and use that in the frontend. Using mismatched shop IDs will return empty data.
+> 
+> **Recommended**: Keep `shop_01` (data already seeded) and set `NEXT_PUBLIC_SHOP_ID=shop_01` in the frontend.
+
+### 3.4 Verify Supabase Pooler URL
+
+Current `DATABASE_URL` uses the Supabase pooler URL (port `6543`) — ✅ correct. The pooler handles connection management. Combined with our `pool_pre_ping=True` fix, this is robust.
+
+---
+
+## 4. Frontend Adjustments — Config Changes Only
+
+### 4.1 [NEW] `frontend/.env.local`
+```env
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+NEXT_PUBLIC_SHOP_ID=shop_01
+NEXT_PUBLIC_SARVAM_API_KEY=your-sarvam-key-here
+```
+
+### 4.2 [NEW] `frontend/lib/api.ts` — Centralized API Helper
+```typescript
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const SHOP_ID = process.env.NEXT_PUBLIC_SHOP_ID || "shop_01";
+const TIMEOUT_MS = 8000;
+
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", ...options?.headers },
+    });
+    if (!res.ok) throw new Error(`API Error: ${res.status}`);
+    return await res.json();
+  } catch (err: any) {
+    if (err.name === "AbortError") throw new Error("Request timed out");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export { SHOP_ID };
+```
+
+### 4.3 [MODIFY] `page.tsx` — Replace Mock Data with API Calls
+
+**Inventory** (replace lines 123–129):
+```typescript
+useEffect(() => {
+  setLoadingInventory(true);
+  apiFetch(`/inventory/?shop_id=${SHOP_ID}&limit=20`)
+    .then((data: any) => {
+      setInventoryList(data.products.map((p: any) => ({
+        sku: p.sku, name: p.name, stock: p.quantity,
+        price: `₹${p.unit_price}`,
+        status: p.quantity <= p.low_stock_threshold ? (p.quantity <= 5 ? "Low Stock" : "Warning") : "Healthy"
+      })));
+    })
+    .catch(() => setError("Failed to load inventory"))
+    .finally(() => setLoadingInventory(false));
+}, [activeTab === "inventory"]);
+```
+
+**Sales, Khata, Reports** — same pattern with field mapping.
+
+**handleSendMessage** (replace lines 187–200):
+```typescript
+try {
+  const response = await apiFetch<AgentResponse>("/agent/parse", {
+    method: "POST",
+    body: JSON.stringify({ shop_id: SHOP_ID, message: userText }),
+  });
+
+  const agentMsg: Message = {
+    id: Date.now() + 1, role: "agent",
+    text: response.response_text,
+    language: null,
+    action: response.confidence >= 0.7 && response.action !== "unknown"
+      ? { item: response.sku, qty: String(response.quantity), action: response.action }
+      : null,
+  };
+  setMessages(prev => [...prev, agentMsg]);
+} catch (err) {
+  setMessages(prev => [...prev, {
+    id: Date.now() + 1, role: "agent",
+    text: "Connection error. Please try again.",
+    language: null, action: null,
+  }]);
+}
+```
+
+### 4.4 [MODIFY] `page.tsx` — Add Loading/Error States
+
+Add to existing state declarations:
+```typescript
+const [loadingData, setLoadingData] = useState(false);
+const [apiError, setApiError] = useState<string | null>(null);
+```
+
+Wrap data sections with loading spinners and error messages.
+
+---
+
+## 5. AI Agent Stability Improvements
+
+### Failure Point Matrix
+
+| Failure | Detection | Response | Already Handled? |
+|---|---|---|---|
+| Gemini returns invalid JSON | `model_validate_json` throws | Returns `action: "unknown"` fallback | ✅ Yes (`agent.py` line 59–69) |
+| Gemini timeout (>15s) | `request_options={"timeout": 15}` | Returns fallback | ✅ Yes |
+| Unknown action field | `AgentAction` enum | Pydantic rejects it → fallback | ✅ Yes (after our audit fix) |
+| Confidence < 0.70 | Frontend check | Don't show confirmation card | ⚠️ Needs frontend logic |
+| Empty RAG context | `build_context` returns "No products" | Agent still responds | ✅ Yes |
+| Missing SKU from agent | Backend `tools.py` raises `ValueError` | Returns 400 error | ✅ Yes |
+| Gemini rate limit | Exception caught | Returns fallback | ✅ Yes |
+| Sarvam STT failure | Frontend must catch | Show "Couldn't hear you" | ⚠️ Needs frontend logic |
+| Sarvam TTS no audio | Browser autoplay policy | Only play after user tap | ⚠️ Needs frontend logic |
+
+---
+
+## 6. Demo Flow Verification — All 5 Flows
+
+### Flow 1 — Stock Update (Hindi)
+```
+User says: "50 relay aaye hain"
+→ POST /agent/parse { shop_id: "shop_01", message: "50 relay aaye hain" }
+→ Agent: { action: "update_stock", sku: "ELE-OMR-24V", quantity: 50, confidence: 0.90+ }
+→ Frontend shows confirmation card
+→ User taps Confirm
+→ POST /inventory/update { shop_id: "shop_01", sku: "ELE-OMR-24V", quantity: 50, update_type: "incoming" }
+→ Toast: "Stock updated!"
+```
+
+### Flow 2 — Sale Record
+```
+User: "5 stepper motor becha 4250 mein"
+→ Agent: { action: "record_sale", sku: "MOT-N17-001", qty_sold: 5, amount: 4250.0 }
+→ Confirmation card → Confirm
+→ POST /sales/record { ... }
+→ Inventory auto-deducted
+```
+
+### Flow 3 — Khata Check
+```
+User: "TechNova ka kitna baaki hai"
+→ Agent: { action: "khata_payment", customer_name: "TechNova Engineering Works", amount: 0 }
+→ Frontend shows ₹45,000 outstanding
+```
+
+### Flow 4 — Analytics Report
+```
+User: "aaj ka report dikhao"
+→ Agent: { action: "unknown", response_text: "Here is today's summary..." }
+→ Frontend navigates to Reports tab / shows summary
+```
+
+### Flow 5 — Low-Confidence Clarification
+```
+User: "thoda soap order karo"
+→ Agent: { action: "unknown", confidence: 0.3, response_text: "Kitna soap chahiye? Please exact number batayein." }
+→ No confirmation card (confidence < 0.7)
+```
+
+> [!IMPORTANT]
+> Flow 4 (reports) requires a new action type in the backend OR frontend-side handling to navigate to the reports tab when the intent is a report request. Simplest fix: frontend checks if `response_text` mentions "report" and auto-opens the reports tab.
+
+---
+
+## 7. Failure Scenarios + Minimal Fixes
+
+| # | Scenario | Cause | Fix |
+|---|---|---|---|
+| 1 | Frontend can't reach backend | CORS blocks Vercel domain | Add exact Vercel URL to `FRONTEND_URL` env var (or use `allow_origins=["*"]` for demo) |
+| 2 | Agent returns malformed JSON | Gemini adds markdown backticks | Already handled: `response_mime_type="application/json"` forces clean JSON |
+| 3 | Empty inventory in RAG | Wrong `shop_id` | Hardcode `shop_01` in frontend `.env.local` to match seeded data |
+| 4 | Backend crash on null fields | Missing null checks | Already fixed: all `AgentResponse` fields have string/int defaults, fallback returns safe values |
+| 5 | Supabase connection drops | Pooler idle timeout | Already fixed: `pool_pre_ping=True` in database.py |
+| 6 | Gemini rate limit during demo | Too many requests | Add 1s debounce on frontend send button. Backend fallback already returns safe response |
+| 7 | Sarvam TTS plays no audio | Browser autoplay policy | Trigger TTS playback only inside a user-initiated event handler (button click) |
+| 8 | Low confidence on every request | System prompt too vague | Add explicit scoring examples: "If exact SKU match + exact quantity = 0.95. If partial match = 0.6" |
+
+---
+
+## 8. Performance Patches
+
+| Patch | Status | Note |
+|---|---|---|
+| Pagination on all list endpoints | ✅ Done | `skip`/`limit` params added in audit |
+| Connection pooling | ✅ Done | `pool_size=10`, `pool_pre_ping=True` |
+| Joinedload on sales query | ✅ Done | No N+1 |
+| RAG context capped | ✅ Done | 100 products, 50 khatas |
+| Gemini API timeout | ✅ Done | 15s |
+| Frontend debounce on send | ⚠️ Needed | Add `isTyping` guard (already exists but needs to disable input) |
+| Reports caching | ⚠️ Optional | Add `Cache-Control: max-age=60` header to reports route |
+
+---
+
+## 9. Pre-Demo Checklist
+
+```
+Backend:
+[ ] .env set on Railway: DATABASE_URL, GEMINI_API_KEY, SECRET_KEY, SHOP_ID=shop_01
+[ ] CORS allows the deployed Vercel URL
+[ ] python seed.py has been run against production DB
+[ ] All 7 endpoints tested via curl from local machine
+[ ] uvicorn running with --workers 4 (not --reload)
+
+Frontend:
+[ ] .env.local set: NEXT_PUBLIC_BACKEND_URL=<Railway URL>, NEXT_PUBLIC_SHOP_ID=shop_01
+[ ] npm run build succeeds with no errors
+[ ] All 4 data tabs show live data (inventory, sales, khata, reports)
+[ ] AI chat sends real requests and shows real responses
+[ ] Confirmation card → Confirm → data updates in real-time
+[ ] Loading spinners shown during API calls
+[ ] Error messages shown on failure (never blank screen)
+
+Demo Safety:
+[ ] Test with airplane mode → frontend shows offline banner
+[ ] Test with wrong shop_id → empty data, not crash
+[ ] Test rapid-fire agent messages → debounce prevents duplicates
+[ ] Test Gemini timeout → fallback message appears within 16 seconds
+[ ] Have fallback demo script ready if live API fails
+```
+
+---
+
+## 10. Components That Must NOT Be Changed
+
+> [!NOTE]
+> These are confirmed stable. Touching any of these risks breaking the demo.
+
+- Database schema and SQLAlchemy models (`models.py`)
+- Seed data (`seed.py`)
+- Pydantic schemas (`schemas.py`) — only the enum change we already made
+- Business logic in `tools.py` (update_stock, record_sale, get_sales_summary)
+- All 6 route handler functions (only imports were changed)
+- Frontend shadcn UI components (`components/shadcn_ui/`)
+- Frontend localization dictionary (`uiTranslations` object)
+- Frontend login screen
+- Frontend sidebar navigation
+- Frontend theme toggle and language cycle
+
+---
+
+## Proposed Changes Summary
+
+### Backend — 2 files modified
+
+#### [MODIFY] [agent.py](file:///Users/vaxdsav/lignuaverse/backend/agent.py)
+- Add multilingual number conversion instructions to system prompt
+- Add language-matching instruction for `response_text`
+
+#### [MODIFY] [main.py](file:///Users/vaxdsav/lignuaverse/backend/main.py)
+- CORS: use `allow_origins=["*"]` for hackathon demo (or add exact Vercel URL)
+
+### Frontend — 3 files (1 new, 1 new, 1 modified)
+
+#### [NEW] [.env.local](file:///Users/vaxdsav/lignuaverse/frontend/.env.local)
+- `NEXT_PUBLIC_BACKEND_URL`, `NEXT_PUBLIC_SHOP_ID`, `NEXT_PUBLIC_SARVAM_API_KEY`
+
+#### [NEW] [lib/api.ts](file:///Users/vaxdsav/lignuaverse/frontend/lib/api.ts)
+- Centralized fetch helper with timeout, error handling, base URL
+
+#### [MODIFY] [app/page.tsx](file:///Users/vaxdsav/lignuaverse/frontend/app/page.tsx)
+- Replace 5 hardcoded data sources with `useEffect` + `apiFetch()` calls
+- Replace `handleSendMessage` mock with real `POST /agent/parse`
+- Add loading states and error handling
+- Add confidence threshold check for confirmation cards
+- Wire Confirm/Cancel buttons to actual backend calls

@@ -13,6 +13,10 @@ class AgentAction(str, Enum):
     UPDATE_STOCK = "update_stock"
     RECORD_SALE = "record_sale"
     KHATA_PAYMENT = "khata_payment"
+    GET_STOCK = "get_stock"
+    GET_KHATA = "get_khata"
+    GET_REPORT = "get_report"
+    CLARIFY = "clarify"
     UNKNOWN = "unknown"
 
 # ==========================================
