@@ -1,0 +1,293 @@
+# 🌐 Linguaverse — Hackathon Pitch Walkthrough
+
+> **Multilingual AI-Powered ERP for Indian MSMEs**
+> Built for GenAI Hackathon 2026 · Team Linguaverse
+
+---
+
+## 🎯 Problem Statement
+
+**63 million MSMEs** in India still run on paper ledgers and WhatsApp. They lose revenue to:
+- **Stock mismatches** — no real-time inventory tracking
+- **Unpaid credit (Udhar/Khata)** — ₹67,000+ outstanding with no follow-up system
+- **Language barriers** — enterprise software is English-only, but 90% of MSME owners operate in Hindi, Tamil, or regional languages
+- **Tech illiteracy** — complex ERP interfaces are unusable for small shop owners
+
+---
+
+## 💡 Our Solution: Linguaverse
+
+A **voice-first, multilingual AI ERP** that any Indian shopkeeper can operate by simply *talking* to it — in Hindi, Hinglish, Tamil, or English.
+
+> **"Relay ka 50 piece aaya"** → AI auto-updates inventory
+> **"Sharma ji ne 5000 diya"** → AI records Khata payment
+> **"Aaj ka report dikhao"** → AI shows real-time P&L
+
+No forms. No training. Just speak.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                  FRONTEND                        │
+│         Next.js 14 + shadcn/ui + TailwindCSS     │
+│    ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
+│    │ Dashboard │  │ Inventory│  │ AI Agent Chat│ │
+│    │  Sales    │  │  Khata   │  │  Voice Input │ │
+│    │  Reports  │  │ Suppliers│  │  (Sarvam AI) │ │
+│    └──────────┘  └──────────┘  └──────────────┘ │
+└─────────────────────┬───────────────────────────┘
+                      │ REST API (JSON)
+┌─────────────────────▼───────────────────────────┐
+│                  BACKEND                         │
+│            FastAPI + SQLAlchemy + SQLite          │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌──────────┐ │
+│  │ Routes │ │ Tools  │ │  RAG   │ │  Agent   │ │
+│  │ (CRUD) │ │(Logic) │ │Context │ │(Gemini)  │ │
+│  └────────┘ └────────┘ └────────┘ └──────────┘ │
+└─────────────────────────────────────────────────┘
+                      │
+        ┌─────────────┼──────────────┐
+        ▼             ▼              ▼
+   ┌─────────┐  ┌──────────┐  ┌──────────┐
+   │ SQLite  │  │ Gemini   │  │ Sarvam   │
+   │   DB    │  │ 2.5 Flash│  │ AI Voice │
+   └─────────┘  └──────────┘  └──────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| **Frontend** | Next.js 14 + React 18 | Server-side rendering, fast HMR |
+| **UI Components** | shadcn/ui + TailwindCSS | Premium design system |
+| **Charts** | Recharts | Interactive sales trend graphs |
+| **Backend** | FastAPI (Python) | Async-ready, auto-generated OpenAPI docs |
+| **ORM** | SQLAlchemy 2.0 | Type-safe queries, row locking |
+| **Database** | SQLite (local) | Zero-config, portable |
+| **AI Engine** | Google Gemini 2.5 Flash | Structured JSON output, multilingual |
+| **Voice STT** | Sarvam AI (saaras:v3) | Hindi/Tamil/English speech recognition |
+| **Voice TTS** | Sarvam AI (bulbul:v1) | Natural Hindi text-to-speech |
+
+---
+
+## ✨ Feature Walkthrough
+
+### 1. 📊 Dashboard
+- **4 live KPI cards**: Today's Sales, Monthly Revenue, Low Stock Alerts, Pending Receivables
+- All numbers are **real-time** from the database — not hardcoded
+- Click any card → navigates to the relevant tab
+
+### 2. 📦 Inventory (Full CRUD)
+- **View**: All products with SKU, price, stock level, and health status badges (Healthy / Warning / Low Stock)
+- **Add**: Dialog with Name, SKU, Price, Category, Quantity → `POST /inventory/create`
+- **Update**: Stock adjustments via AI agent ("50 relay aaya") → `POST /inventory/update`
+- **Delete**: Red delete button per row with confirmation prompt → `DELETE /inventory/{id}`
+
+### 3. 💰 Sales
+- **Live feed** of all transactions with product name, quantity, amount, and timestamp
+- **Record Sale dialog**: Select product from live inventory dropdown, auto-calculates total
+- Sale recording **auto-deducts** inventory using database row locks (`WITH FOR UPDATE`)
+
+### 4. 📒 Khata (Credit Ledger)
+- Tracks B2B customers with outstanding balances and overdue days
+- Summary cards: Total Outstanding, Active Accounts, Recovered This Week
+- **Settle Due dialog**: Record payments → reduces customer balance in real-time
+
+### 5. 🚛 Suppliers & Orders
+- Supplier directory with contact info and language preferences
+- Purchase orders with status tracking (Pending / Confirmed)
+- Expected delivery dates
+
+### 6. 📈 Reports & Analytics
+- **Monthly P&L**: Revenue, Expenses, Net Profit (shows red if negative ↓)
+- **7-Day Sales Trend**: Interactive line chart (Recharts) with hover tooltips
+- **Top Products**: Ranked by revenue with units sold
+- **Critical Stock Alerts**: Products below threshold with "Auto-Generate PO" button
+- **GST Summary**: Auto-calculated CGST + SGST (18% bracket)
+
+### 7. ⚙️ Settings
+- Shop Information (Shop ID, Platform, Backend URL, AI Engine)
+- Theme Toggle (Dark/Light mode)
+- Language Switcher (EN → HI Partial → HI Full → Tamil → cycle)
+
+---
+
+## 🤖 GenAI Integration Deep Dive
+
+### The AI Agent Pipeline
+
+```
+User speaks "relay ka 50 piece aaya"
+        │
+        ▼
+   ┌─────────────┐
+   │  Sarvam STT │ ← Hindi voice → text
+   │  (saaras:v3)│
+   └──────┬──────┘
+          │ "relay ka 50 piece aaya"
+          ▼
+   ┌─────────────┐
+   │  RAG Context│ ← Fetches live inventory + khata from DB
+   │  (rag.py)   │   Capped at 100 products / 50 khata
+   └──────┬──────┘
+          │ context + user message
+          ▼
+   ┌─────────────────────┐
+   │   Gemini 2.5 Flash  │ ← Structured JSON output
+   │   System Prompt:     │   response_schema = AgentResponse
+   │   - 9 action types   │   temperature = 0.1
+   │   - SKU mapping      │
+   │   - Hindi numbers    │
+   │   - Confidence score │
+   └──────┬──────────────┘
+          │ { action: "update_stock", sku: "ELE-OMR-24V", quantity: 50, confidence: 0.95 }
+          ▼
+   ┌─────────────┐
+   │  Frontend   │ ← Shows Confirm/Cancel card
+   │  Confirm    │   User clicks Confirm
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────┐
+   │ Backend API │ ← POST /inventory/update
+   │ Row Lock    │   quantity += 50 (atomic, race-condition safe)
+   │ Commit      │
+   └──────┬──────┘
+          │
+          ▼
+   ┌─────────────┐
+   │  Sarvam TTS │ ← "Stock updated. New stock: 400 units."
+   │  (bulbul:v1)│   Speaks response aloud in Hindi
+   └─────────────┘
+```
+
+### Supported AI Actions (9 Total)
+
+| Action | Trigger Example | What Happens |
+|---|---|---|
+| [update_stock](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/backend/tools.py#6-44) | "50 relay aaya" | Adds/removes stock with row locking |
+| `add_product` | "naya item Fevikwik add karo" | Creates new product in inventory |
+| [record_sale](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/backend/tools.py#45-85) | "10 MCB becha 2450 mein" | Records sale + auto-deducts inventory |
+| `khata_payment` | "Sharma ji ne 5000 diya" | Reduces customer outstanding balance |
+| `get_stock` | "relay ka stock batao" | Reads and displays current stock |
+| [get_khata](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/backend/routes/khata.py#8-28) | "sabka udhar dikhao" | Shows all pending credit accounts |
+| [get_report](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/backend/routes/reports.py#10-80) | "aaj ka report" | Shows revenue, profit, top products |
+| `clarify` | "kuch karo" | Asks user for more details |
+| `unknown` | Unrelated queries | Politely declines |
+
+### Key GenAI Features
+- **Structured JSON Output**: Gemini returns a strict Pydantic-validated schema — no free-text parsing needed
+- **Multilingual Number Parsing**: "pachaas" → 50, "do hazaar" → 2000
+- **Language Matching**: AI replies in the same language the user spoke
+- **Confidence Scoring**: 0.95 for exact SKU match, 0.50 for partial, below 0.7 asks for confirmation
+- **Prompt Injection Defense**: User input wrapped in `<user_input>` delimiters
+- **Retry with Backoff**: 2 retries with 8-second delay for rate limit handling
+
+---
+
+## 🎙️ Voice Integration (Sarvam AI)
+
+- **Press-and-hold mic button** → records audio via MediaRecorder API
+- **STT**: Sarvam `saaras:v3` model converts Hindi/Tamil/English speech to text
+- **TTS**: Sarvam `bulbul:v1` speaks the AI agent's response aloud
+- **Graceful fallbacks**: If mic permission denied → text input still works; if STT fails → shows error message; if TTS fails → text is displayed silently
+
+---
+
+## 🌍 Multilingual Support (5 Language Modes)
+
+| Mode | Label | Coverage |
+|---|---|---|
+| English | EN | Full UI in English |
+| Hindi (Partial) | HI (PARTIAL) | Key labels in Hindi, rest in English |
+| Hindi (Full) | HI (FULL) | Complete Hindi interface |
+| Tamil | TA | Complete Tamil interface |
+| AI Agent | Auto-detect | Replies in whatever language user speaks |
+
+---
+
+## 🔒 Security & Robustness
+
+- [.env](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/backend/.env) files excluded via [.gitignore](file:///d:/Hackathons/LinguaverseGenAI/linguaverse/.gitignore) — API keys never committed
+- Database row locking prevents race conditions on concurrent stock updates
+- Pydantic schema validation rejects malformed API inputs
+- AbortController timeouts (8s) prevent hanging requests
+- Centralized error handling with user-friendly error banners
+
+---
+
+## 📂 Project Structure
+
+```
+linguaverse/
+├── backend/                     (12 source files, Python)
+│   ├── main.py                  FastAPI app + CORS + routers
+│   ├── agent.py                 Gemini AI intent parser
+│   ├── rag.py                   Live DB context for AI
+│   ├── tools.py                 Business logic (row locking)
+│   ├── models.py                5 SQLAlchemy ORM models
+│   ├── schemas.py               Pydantic validation schemas
+│   ├── database.py              DB engine + session
+│   ├── seed.py                  Realistic demo data
+│   └── routes/                  6 API route modules
+│       ├── inventory.py         CRUD: create, read, update, delete
+│       ├── sales.py             Record + list + summary
+│       ├── khata.py             Credit ledger queries
+│       ├── suppliers.py         Supplier + PO management
+│       ├── reports.py           P&L, top products, GST, analytics
+│       └── agent.py             AI parsing endpoint
+│
+├── frontend/                    (Next.js 14)
+│   ├── app/page.tsx             Main app (1600 lines)
+│   ├── lib/api.ts               Centralized API helper
+│   ├── lib/sarvam.ts            Voice STT/TTS integration
+│   └── components/shadcn_ui/    10 UI components
+│
+└── .gitignore                   Protects all secrets
+```
+
+---
+
+## 🎬 Demo Script for Judges
+
+### Step 1: Show the Dashboard
+> "This is Linguaverse — a voice-first ERP for Indian hardware shops. Everything you see is live data from a real database."
+
+### Step 2: Voice Command
+> Hold the mic button and say: **"relay ka stock batao"**
+> → AI responds with current stock in Hindi
+
+### Step 3: Add Product via Voice
+> Say: **"inventory mein Fevikwik add karo, price 50 rupees, 20 stock"**
+> → AI shows confirm card → click Confirm → product appears in Inventory tab
+
+### Step 4: Record a Sale
+> Say: **"10 MCB becha Sharma ji ko, 2450 rupees"**
+> → AI records the sale, inventory auto-deducts
+
+### Step 5: Check Reports
+> Navigate to Reports tab → show the **7-day sales trend graph** and **P&L**
+
+### Step 6: Switch Language
+> Toggle to **Hindi (Full)** → entire UI switches to Hindi
+> Toggle to **Tamil** → entire UI switches to Tamil
+> Say: **"இன்றைய விற்பனை காட்டு"** (show today's sales in Tamil)
+
+### Step 7: Show the Architecture
+> "We use Gemini 2.5 Flash for structured intent parsing, Sarvam AI for voice, and FastAPI with SQLAlchemy for a production-grade backend with row locking."
+
+---
+
+## 🏆 Key Differentiators
+
+1. **Voice-first, not voice-added** — the mic button is the primary input, not an afterthought
+2. **Real database manipulation** — every action modifies a real SQLite database with ACID transactions
+3. **Structured AI output** — Gemini returns validated JSON, not free text that needs regex parsing
+4. **9 distinct AI actions** — not just a chatbot, but a full business operations agent
+5. **True multilingual** — UI in 4 languages + AI auto-detects and responds in user's language
+6. **Production patterns** — row locking, retry with backoff, prompt injection defense, N+1 prevention

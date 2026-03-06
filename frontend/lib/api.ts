@@ -4,7 +4,7 @@
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-const TIMEOUT_MS = 8000;
+const TIMEOUT_MS = 30000;
 
 export const SHOP_ID = process.env.NEXT_PUBLIC_SHOP_ID || "shop_01";
 

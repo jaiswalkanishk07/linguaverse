@@ -12,7 +12,7 @@ export type SarvamLanguage = "hi-IN" | "ta-IN" | "en-IN";
 export function mapLanguageToSarvam(langLevel: string): SarvamLanguage {
     if (langLevel.startsWith("ta")) return "ta-IN";
     if (langLevel.startsWith("hi")) return "hi-IN";
-    return "hi-IN"; // default: Hinglish → Hindi
+    return "en-IN"; // default: English
 }
 
 /**
@@ -70,6 +70,10 @@ export async function sarvamTTS(
         return;
     }
 
+    // Strip emojis and special characters that confuse TTS
+    const cleanText = text.replace(/[✅❌⚠️🔍📦📒📊📈🙏•🎙️]/g, "").replace(/\s+/g, " ").trim();
+    if (!cleanText) return;
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -81,47 +85,58 @@ export async function sarvamTTS(
                 "api-subscription-key": SARVAM_KEY,
             },
             body: JSON.stringify({
-                inputs: [text.slice(0, 500)], // Cap text to avoid excessive audio
+                inputs: [cleanText.slice(0, 500)],
                 target_language_code: languageCode,
-                speaker: "meera",
-                model: "bulbul:v1",
+                speaker: "manisha",
+                model: "bulbul:v2",
             }),
             signal: controller.signal,
         });
 
         if (!res.ok) {
-            console.error(`TTS failed (${res.status})`);
-            return; // Silent fallback
+            const errBody = await res.text().catch(() => "");
+            console.error(`TTS failed (${res.status}):`, errBody);
+            return;
         }
 
         const data = await res.json();
         const base64Audio = data.audios?.[0];
-        if (!base64Audio) return;
+        if (!base64Audio) {
+            console.warn("TTS: No audio data in response");
+            return;
+        }
 
-        // Decode base64 to audio and play
+        // Decode base64 to binary
         const binaryString = atob(base64Audio);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
 
-        const audioContext = new AudioContext();
-        const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
+        // Use Audio element instead of AudioContext (avoids autoplay policy blocks)
+        const blob = new Blob([bytes], { type: "audio/wav" });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
 
         return new Promise<void>((resolve) => {
-            source.onended = () => {
-                audioContext.close();
+            audio.onended = () => {
+                URL.revokeObjectURL(url);
                 resolve();
             };
-            source.start();
+            audio.onerror = () => {
+                console.error("TTS: Audio playback error");
+                URL.revokeObjectURL(url);
+                resolve();
+            };
+            audio.play().catch((e) => {
+                console.error("TTS: play() blocked:", e);
+                URL.revokeObjectURL(url);
+                resolve();
+            });
         });
     } catch (err: any) {
         if (err.name === "AbortError") console.error("TTS timed out");
         else console.error("TTS error:", err);
-        // Silent fallback — text is already displayed
     } finally {
         clearTimeout(timer);
     }

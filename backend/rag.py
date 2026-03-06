@@ -3,8 +3,8 @@ from models import Product, Khata
 
 def build_context(shop_id: str, db: Session) -> str:
     """
-    Pulls live data from PostgreSQL and formats it into a text block 
-    so the Gemini LLM has perfect context of the shop's current state.
+    Pulls live data from the database and formats it into a text block 
+    so the LLM has perfect context of the shop's current state.
     """
     # 1. Fetch live inventory (capped to prevent token overflow)
     products = db.query(Product).filter(Product.shop_id == shop_id).limit(100).all()

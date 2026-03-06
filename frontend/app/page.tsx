@@ -8,7 +8,7 @@ import {
   Settings, Mic, Send, AlertTriangle, Plus, Search,
   Bot, User, CheckCircle2, X, BarChart3, Receipt, FileSpreadsheet,
   BookOpen, Bell, Globe, LogOut, PanelLeftClose, PanelLeftOpen,
-  Lock, ArrowRight, WifiOff, Sun, Moon
+  Lock, ArrowRight, WifiOff, Sun, Moon, Zap, ShieldCheck, Languages, Eye, EyeOff
 } from "lucide-react"
 import { Button } from "@/components/shadcn_ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/shadcn_ui/card"
@@ -20,6 +20,7 @@ import { ScrollArea } from "@/components/shadcn_ui/scroll-area"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/shadcn_ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/shadcn_ui/dialog"
 import { Label } from "@/components/shadcn_ui/label"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 interface MessageAction {
   item: string;
@@ -43,6 +44,14 @@ interface AgentApiResponse {
   customer_name: string;
   confidence: number;
   response_text: string;
+  detected_language: string;
+}
+
+// Map LLM detected_language ("hi","en","ta") to Sarvam language code
+function detectedLangToSarvam(lang: string): "hi-IN" | "ta-IN" | "en-IN" {
+  if (lang === "ta") return "ta-IN";
+  if (lang === "hi") return "hi-IN";
+  return "en-IN";
 }
 
 interface BackendProduct {
@@ -135,9 +144,11 @@ const uiTranslations = {
 export default function Dashboard() {
   // --- CORE APP STATES ---
   const [theme, setTheme] = useState<"dark" | "light">("dark"); // Theme State
+  const [showLanding, setShowLanding] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [showPassword, setShowPassword] = useState(false);
 
   const [activeTab, setActiveTab] = useState("dashboard");
   const [language, setLanguage] = useState<LangLevel>("en");
@@ -172,7 +183,7 @@ export default function Dashboard() {
   });
 
   const [inventoryList, setInventoryList] = useState<
-    { sku: string; name: string; stock: number; price: string; status: string }[]
+    { id: number; sku: string; name: string; stock: number; price: string; status: string }[]
   >([]);
 
   const [khataList, setKhataList] = useState<
@@ -194,7 +205,8 @@ export default function Dashboard() {
   const [reportsData, setReportsData] = useState({
     pnl: "₹0", revenue: "₹0", gst: "₹0",
     topProducts: [] as { name: string; sold: number; rev: string }[],
-    lowStockAlerts: [] as { name: string; current: number; threshold: number }[]
+    lowStockAlerts: [] as { name: string; current: number; threshold: number }[],
+    salesTrend: [] as { date: string; revenue: number }[]
   });
 
   // Store the last agent response for confirmation flow
@@ -203,7 +215,7 @@ export default function Dashboard() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1, role: "system",
-      text: "Namaste! 3 items need restocking today. Dove Soap is down to 8 units. Should I order more?",
+      text: "🙏 Namaste! I'm your Linguaverse AI assistant. Aap Hindi, English ya Tamil mein baat kar sakte hain — voice ya text dono chalega! Try: \"stock dikhao\" or \"aaj ka report\"",
       language: null, action: null
     }
   ]);
@@ -228,7 +240,7 @@ export default function Dashboard() {
     try {
       const data: any = await apiFetch(`/inventory/?shop_id=${SHOP_ID}&limit=50`);
       setInventoryList(data.products.map((p: BackendProduct) => ({
-        sku: p.sku, name: p.name, stock: p.quantity,
+        id: p.id, sku: p.sku, name: p.name, stock: p.quantity,
         price: `₹${p.unit_price}`,
         status: p.quantity <= (p.low_stock_threshold * 0.5) ? "Low Stock" : p.quantity <= p.low_stock_threshold ? "Warning" : "Healthy"
       })));
@@ -309,7 +321,8 @@ export default function Dashboard() {
         revenue: `₹${pnl.total_revenue.toLocaleString()}`,
         gst: `₹${(gstData?.total_gst || 0).toLocaleString()}`,
         topProducts: top.map((p: any) => ({ name: p.name, sold: p.quantity_sold, rev: `₹${p.revenue.toLocaleString()}` })),
-        lowStockAlerts: lowAlerts.map((a: any) => ({ name: a.name, current: a.current_quantity, threshold: a.low_stock_threshold }))
+        lowStockAlerts: lowAlerts.map((a: any) => ({ name: a.name, current: a.current_quantity, threshold: a.low_stock_threshold })),
+        salesTrend: analyticsData.sales_trend || []
       });
       setStats(prev => ({
         ...prev,
@@ -356,10 +369,12 @@ export default function Dashboard() {
   };
 
   // --- AI AGENT: ACTION HANDLING ---
-  const WRITE_ACTIONS = ["update_stock", "record_sale", "khata_payment"];
+  const WRITE_ACTIONS = ["update_stock", "add_product", "record_sale", "khata_payment"];
   const READ_ACTIONS = ["get_stock", "get_khata", "get_report"];
 
   const handleReadAction = async (response: AgentApiResponse) => {
+    const lang = response.detected_language || "en";
+    const ttsLang = detectedLangToSarvam(lang);
     try {
       let resultText = response.response_text;
       if (response.action === "get_stock") {
@@ -367,41 +382,63 @@ export default function Dashboard() {
         const products = data.products;
         if (response.sku) {
           const match = products.find((p: any) => p.sku === response.sku);
-          resultText = match
-            ? `📦 ${match.name} (${match.sku})\nStock: ${match.quantity} units\nPrice: ₹${match.unit_price}\n${match.quantity <= match.low_stock_threshold ? "⚠️ Low stock!" : "✅ Stock healthy"}`
-            : response.response_text || "Product not found.";
+          if (match) {
+            const lowLabel = lang === "hi" ? "⚠️ स्टॉक कम है!" : lang === "ta" ? "⚠️ கையிருப்பு குறைவு!" : "⚠️ Low stock!";
+            const okLabel = lang === "hi" ? "✅ स्टॉक ठीक है" : lang === "ta" ? "✅ கையிருப்பு நல்லது" : "✅ Stock healthy";
+            const stockWord = lang === "hi" ? "स्टॉक" : lang === "ta" ? "கையிருப்பு" : "Stock";
+            const priceWord = lang === "hi" ? "कीमत" : lang === "ta" ? "விலை" : "Price";
+            resultText = `📦 ${match.name} (${match.sku})\n${stockWord}: ${match.quantity}\n${priceWord}: ₹${match.unit_price}\n${match.quantity <= match.low_stock_threshold ? lowLabel : okLabel}`;
+          } else {
+            resultText = response.response_text || (lang === "hi" ? "उत्पाद नहीं मिला।" : lang === "ta" ? "பொருள் கிடைக்கவில்லை." : "Product not found.");
+          }
         } else {
-          const summary = products.slice(0, 5).map((p: any) => `• ${p.name}: ${p.quantity} units ${p.quantity <= p.low_stock_threshold ? "⚠️" : "✅"}`).join("\n");
-          resultText = `📦 Current Inventory:\n${summary}${products.length > 5 ? `\n...and ${products.length - 5} more` : ""}`;
+          const header = lang === "hi" ? "📦 वर्तमान इन्वेंटरी:" : lang === "ta" ? "📦 தற்போதைய கையிருப்பு:" : "📦 Current Inventory:";
+          const summary = products.slice(0, 5).map((p: any) => `• ${p.name}: ${p.quantity} ${p.quantity <= p.low_stock_threshold ? "⚠️" : "✅"}`).join("\n");
+          const moreText = products.length > 5 ? (lang === "hi" ? `\n...और ${products.length - 5} और` : lang === "ta" ? `\n...மேலும் ${products.length - 5}` : `\n...and ${products.length - 5} more`) : "";
+          resultText = `${header}\n${summary}${moreText}`;
         }
       } else if (response.action === "get_khata") {
         const data: any = await apiFetch(`/khata/?shop_id=${SHOP_ID}&limit=50`);
         if (response.customer_name) {
           const match = data.accounts.find((k: any) => k.customer_name.toLowerCase().includes(response.customer_name.toLowerCase()));
-          resultText = match
-            ? `📒 ${match.customer_name}\nOutstanding: ₹${match.outstanding_balance.toLocaleString()}\n${match.days_overdue > 0 ? `⚠️ ${match.days_overdue} days overdue` : "✅ On time"}`
-            : response.response_text || "Customer not found.";
+          if (match) {
+            const outLabel = lang === "hi" ? "बकाया" : lang === "ta" ? "நிலுவை" : "Outstanding";
+            const overdueLabel = match.days_overdue > 0
+              ? (lang === "hi" ? `⚠️ ${match.days_overdue} दिन से बकाया` : lang === "ta" ? `⚠️ ${match.days_overdue} நாட்கள் தாமதம்` : `⚠️ ${match.days_overdue} days overdue`)
+              : (lang === "hi" ? "✅ समय पर" : lang === "ta" ? "✅ சரியான நேரத்தில்" : "✅ On time");
+            resultText = `📒 ${match.customer_name}\n${outLabel}: ₹${match.outstanding_balance.toLocaleString()}\n${overdueLabel}`;
+          } else {
+            resultText = response.response_text || (lang === "hi" ? "ग्राहक नहीं मिला।" : lang === "ta" ? "வாடிக்கையாளர் கிடைக்கவில்லை." : "Customer not found.");
+          }
         } else {
+          const header = lang === "hi" ? "📒 बकाया खाता:" : lang === "ta" ? "📒 நிலுவை கணக்கு:" : "📒 Pending Khata:";
           const summary = data.accounts.slice(0, 5).map((k: any) => `• ${k.customer_name}: ₹${k.outstanding_balance.toLocaleString()} ${k.days_overdue > 30 ? "🔴" : "🟡"}`).join("\n");
-          resultText = `📒 Pending Khata:\n${summary}`;
+          resultText = `${header}\n${summary}`;
         }
       } else if (response.action === "get_report") {
         const rpt: any = await apiFetch(`/reports/summary?shop_id=${SHOP_ID}`);
         const pnl = rpt.profit_and_loss;
-        resultText = `📊 Monthly Report (${rpt.period}):\nRevenue: ₹${pnl.total_revenue.toLocaleString()}\nExpenses: ₹${pnl.total_expenses.toLocaleString()}\nNet Profit: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)`;
+        if (lang === "hi") {
+          resultText = `📊 मासिक रिपोर्ट (${rpt.period}):\nराजस्व: ₹${pnl.total_revenue.toLocaleString()}\nखर्च: ₹${pnl.total_expenses.toLocaleString()}\nशुद्ध लाभ: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)`;
+        } else if (lang === "ta") {
+          resultText = `📊 மாத அறிக்கை (${rpt.period}):\nவருவாய்: ₹${pnl.total_revenue.toLocaleString()}\nசெலவுகள்: ₹${pnl.total_expenses.toLocaleString()}\nநிகர லாபம்: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)`;
+        } else {
+          resultText = `📊 Monthly Report (${rpt.period}):\nRevenue: ₹${pnl.total_revenue.toLocaleString()}\nExpenses: ₹${pnl.total_expenses.toLocaleString()}\nNet Profit: ₹${pnl.net_profit.toLocaleString()} (${pnl.profit_margin_percent}%)`;
+        }
       }
       setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: resultText, language: null, action: null }]);
-      // TTS: speak read action results
-      try { sarvamTTS(resultText, mapLanguageToSarvam(language)); } catch { }
+      // TTS: speak read action results in the detected language
+      try { sarvamTTS(resultText, ttsLang); } catch { }
     } catch (err: any) {
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: `⚠️ Could not fetch data: ${err.message}`, language: null, action: null }]);
+      const errText = lang === "hi" ? `⚠️ डेटा प्राप्त नहीं हो सका: ${err.message}` : lang === "ta" ? `⚠️ தரவைப் பெற முடியவில்லை: ${err.message}` : `⚠️ Could not fetch data: ${err.message}`;
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: errText, language: null, action: null }]);
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!inputText.trim() || isTyping) return;
+  const handleSendMessage = async (overrideText?: string) => {
+    const userText = (overrideText || inputText).trim();
+    if (!userText || isTyping) return;
 
-    const userText = inputText.trim();
     const newUserMsg: Message = { id: Date.now(), role: "user", text: userText, language: "Hinglish", action: null };
 
     setMessages(prev => [...prev, newUserMsg]);
@@ -414,8 +451,12 @@ export default function Dashboard() {
         body: JSON.stringify({ shop_id: SHOP_ID, message: userText }),
       });
 
+      const detLang = response.detected_language || "en";
+      const ttsLang = detectedLangToSarvam(detLang);
+
       if (READ_ACTIONS.includes(response.action)) {
-        setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: "🔍 Checking...", language: null, action: null }]);
+        const checkText = detLang === "hi" ? "🔍 देख रहे हैं..." : detLang === "ta" ? "🔍 சரிபார்க்கிறோம்..." : "🔍 Checking...";
+        setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: checkText, language: null, action: null }]);
         setIsTyping(false);
         await handleReadAction(response);
         return;
@@ -423,9 +464,10 @@ export default function Dashboard() {
 
       if (WRITE_ACTIONS.includes(response.action) && response.confidence >= 0.7) {
         setPendingAction(response);
+        const confWarning = response.confidence < 0.85 ? (detLang === "hi" ? " ⚠️ मध्यम विश्वास" : detLang === "ta" ? " ⚠️ நடுத்தர நம்பகத்தன்மை" : " ⚠️ Medium confidence") : "";
         const agentMsg: Message = {
           id: Date.now() + 1, role: "agent",
-          text: response.response_text + (response.confidence < 0.85 ? " ⚠️ Medium confidence" : ""),
+          text: response.response_text + confWarning,
           language: null,
           action: {
             item: response.sku || response.customer_name || "N/A",
@@ -434,17 +476,25 @@ export default function Dashboard() {
           },
         };
         setMessages(prev => [...prev, agentMsg]);
+        try { sarvamTTS(response.response_text, ttsLang); } catch { }
       } else {
+        const fallbackText = response.response_text || (detLang === "hi" ? "समझ नहीं आया। दोबारा बोलें?" : detLang === "ta" ? "புரியவில்லை. மீண்டும் சொல்லுங்கள்?" : "I didn't understand. Could you try again?");
         setMessages(prev => [...prev, {
           id: Date.now() + 1, role: "agent",
-          text: response.response_text || "Samajh nahi aaya. Dobara bolein?",
+          text: fallbackText,
           language: null, action: null,
         }]);
+        try { sarvamTTS(fallbackText, ttsLang); } catch { }
       }
     } catch (err: any) {
+      const errMsg = err.message || "";
+      let displayMsg = "❌ AI unavailable. Try again.";
+      if (errMsg.includes("timed out")) displayMsg = "⏳ Taking too long. Check connection.";
+      else if (errMsg.includes("429")) displayMsg = "⚠️ API rate limit reached. Wait a minute and try again.";
+      else if (errMsg.includes("API Error")) displayMsg = `⚠️ ${errMsg}`;
       setMessages(prev => [...prev, {
         id: Date.now() + 1, role: "agent",
-        text: err.message?.includes("timed out") ? "⏳ Taking too long. Check connection." : "❌ AI unavailable. Try again.",
+        text: displayMsg,
         language: null, action: null,
       }]);
     } finally {
@@ -458,21 +508,47 @@ export default function Dashboard() {
     try {
       let result: any;
       if (pendingAction.action === "update_stock") {
+        const qty = pendingAction.quantity;
         result = await apiFetch("/inventory/update", {
           method: "POST",
-          body: JSON.stringify({ shop_id: SHOP_ID, sku: pendingAction.sku, quantity: pendingAction.quantity, update_type: "incoming" }),
+          body: JSON.stringify({ shop_id: SHOP_ID, sku: pendingAction.sku, quantity: Math.abs(qty), update_type: qty < 0 ? "outgoing" : "incoming" }),
         });
       } else if (pendingAction.action === "record_sale") {
         result = await apiFetch("/sales/record", {
           method: "POST",
           body: JSON.stringify({ shop_id: SHOP_ID, sku: pendingAction.sku, qty_sold: pendingAction.quantity, amount: pendingAction.amount, created_by: "agent" }),
         });
+      } else if (pendingAction.action === "add_product") {
+        const productName = pendingAction.customer_name || pendingAction.sku;
+        const sku = pendingAction.sku || productName.toUpperCase().replace(/\s+/g, "-").slice(0, 12);
+        result = await apiFetch("/inventory/create", {
+          method: "POST",
+          body: JSON.stringify({ shop_id: SHOP_ID, name: productName, sku: sku, unit_price: pendingAction.amount || 0, category: "General", quantity: pendingAction.quantity || 0 }),
+        });
+      } else if (pendingAction.action === "khata_payment") {
+        result = await apiFetch("/khata/payment", {
+          method: "POST",
+          body: JSON.stringify({ shop_id: SHOP_ID, customer_name: pendingAction.customer_name, amount: pendingAction.amount }),
+        });
       }
-      const detail = result?.data?.new_quantity != null ? ` New stock: ${result.data.new_quantity}` : result?.data?.remaining_stock != null ? ` Remaining: ${result.data.remaining_stock}` : "";
-      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `✅ Action confirmed!${detail}`, language: null, action: null }]);
-      fetchInventory(); fetchSales(); fetchReports();
+      const pLang = pendingAction.detected_language || "en";
+      const pTts = detectedLangToSarvam(pLang);
+      let detail = "";
+      if (result?.data?.new_quantity != null) {
+        detail = pLang === "hi" ? ` नया स्टॉक: ${result.data.new_quantity}` : pLang === "ta" ? ` புதிய கையிருப்பு: ${result.data.new_quantity}` : ` New stock: ${result.data.new_quantity}`;
+      } else if (result?.data?.remaining_stock != null) {
+        detail = pLang === "hi" ? ` शेष: ${result.data.remaining_stock}` : pLang === "ta" ? ` மீதமுள்ளது: ${result.data.remaining_stock}` : ` Remaining: ${result.data.remaining_stock}`;
+      } else if (result?.data?.new_balance != null) {
+        detail = pLang === "hi" ? ` नया बैलेंस: ₹${result.data.new_balance}` : pLang === "ta" ? ` புதிய இருப்பு: ₹${result.data.new_balance}` : ` New balance: ₹${result.data.new_balance}`;
+      }
+      const confirmText = pLang === "hi" ? `कार्रवाई सफल!${detail}` : pLang === "ta" ? `செயல் உறுதிப்படுத்தப்பட்டது!${detail}` : `Action confirmed!${detail}`;
+      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `✅ ${confirmText}`, language: null, action: null }]);
+      try { sarvamTTS(confirmText, pTts); } catch { }
+      fetchInventory(); fetchSales(); fetchReports(); fetchKhata();
     } catch (err: any) {
-      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: `❌ Failed: ${err.message}`, language: null, action: null }]);
+      const fLang = pendingAction?.detected_language || "en";
+      const failText = fLang === "hi" ? `❌ विफल: ${err.message}` : fLang === "ta" ? `❌ தோல்வி: ${err.message}` : `❌ Failed: ${err.message}`;
+      setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: failText, language: null, action: null }]);
     } finally {
       setIsTyping(false);
       setPendingAction(null);
@@ -480,8 +556,10 @@ export default function Dashboard() {
   };
 
   const handleCancelAction = () => {
+    const cLang = pendingAction?.detected_language || "en";
+    const cancelText = cLang === "hi" ? "❌ रद्द। और कुछ मदद चाहिए?" : cLang === "ta" ? "❌ ரத்து செய்யப்பட்டது. வேறு உதவி வேண்டுமா?" : "❌ Cancelled. Need anything else?";
     setPendingAction(null);
-    setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: "❌ Cancelled. Kuch aur help chahiye?", language: null, action: null }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: cancelText, language: null, action: null }]);
   };
 
   // --- VOICE RECORDING ---
@@ -512,7 +590,8 @@ export default function Dashboard() {
         try {
           const transcript = await sarvamSTT(audioBlob, mapLanguageToSarvam(language));
           if (transcript.trim()) {
-            setInputText(transcript);
+            // Auto-send the voice transcript directly
+            handleSendMessage(transcript.trim());
           } else {
             setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: "🎤 Couldn't hear clearly. Please try again or type your command.", language: null, action: null }]);
           }
@@ -541,6 +620,134 @@ export default function Dashboard() {
       default: return activeTab;
     }
   };
+
+  // ==========================================
+  // VIEW: LANDING HOME PAGE
+  // ==========================================
+  if (showLanding) {
+    return (
+      <div className={theme === 'dark' ? 'dark' : ''}>
+        <div
+          className="min-h-screen bg-zinc-50 dark:bg-zinc-950 font-sans relative overflow-hidden transition-colors duration-500"
+          onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+        >
+          {/* Ambient Glow */}
+          <div
+            className="fixed w-[700px] h-[700px] bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-[120px] pointer-events-none transition-all duration-700 ease-out z-0"
+            style={{
+              left: mousePos.x === 0 && mousePos.y === 0 ? '50%' : `${mousePos.x}px`,
+              top: mousePos.x === 0 && mousePos.y === 0 ? '40%' : `${mousePos.y}px`,
+              transform: 'translate(-50%, -50%)'
+            }}
+          />
+          <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-violet-500/5 dark:bg-violet-500/10 rounded-full blur-[100px] pointer-events-none z-0" />
+
+          {/* NAV BAR */}
+          <nav className="relative z-20 flex items-center justify-between px-8 md:px-16 py-6">
+            <div>
+              <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
+                Bazaar<span className="text-indigo-600 dark:text-indigo-500">OS</span>
+              </h1>
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 font-medium tracking-wide mt-0.5">Be your own BOS</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleTheme}
+                className="p-2.5 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:scale-110 transition-transform"
+              >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <Button
+                onClick={() => setShowLanding(false)}
+                className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white px-6 py-2 text-sm font-semibold group"
+              >
+                Login <ArrowRight className="ml-1.5 w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </Button>
+            </div>
+          </nav>
+
+          {/* HERO SECTION */}
+          <section className="relative z-10 flex flex-col items-center justify-center text-center px-6 pt-16 pb-20 md:pt-24 md:pb-28">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/20 mb-8">
+              <Zap size={14} className="text-indigo-600 dark:text-indigo-400" />
+              <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">AI-Powered ERP for Indian MSMEs</span>
+            </div>
+
+            <h2 className="text-5xl md:text-7xl font-extrabold text-zinc-900 dark:text-white leading-[1.1] tracking-tight max-w-4xl">
+              Run your business in{' '}
+              <span className="bg-gradient-to-r from-indigo-600 via-violet-500 to-purple-500 bg-clip-text text-transparent">any language</span>
+            </h2>
+
+            <p className="mt-6 text-lg md:text-xl text-zinc-500 dark:text-zinc-400 max-w-2xl leading-relaxed">
+              The first multilingual ERP that understands Hindi, English, Tamil &amp; more.
+              Manage inventory, sales, and credit — all through voice or text.
+            </p>
+
+            <div className="mt-10 flex flex-col sm:flex-row gap-4">
+              <Button
+                onClick={() => setShowLanding(false)}
+                className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white px-8 py-6 text-md font-semibold group shadow-lg shadow-indigo-500/25"
+              >
+                Get Started <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Button>
+              <Button
+                variant="outline"
+                className="border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 px-8 py-6 text-md font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                onClick={() => setShowLanding(false)}
+              >
+                Watch Demo
+              </Button>
+            </div>
+          </section>
+
+          {/* FEATURE CARDS */}
+          <section className="relative z-10 px-8 md:px-16 pb-24">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              {/* Card 1 */}
+              <div className="group p-8 rounded-2xl bg-white/70 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 backdrop-blur-sm hover:border-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/5 transition-all duration-300 hover:-translate-y-1">
+                <div className="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-5 border border-indigo-500/20 group-hover:scale-110 transition-transform">
+                  <Languages className="text-indigo-600 dark:text-indigo-400 w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Multilingual AI Agent</h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Speak in Hindi, Hinglish, Tamil or English. Our AI understands your language and responds naturally.
+                </p>
+              </div>
+              {/* Card 2 */}
+              <div className="group p-8 rounded-2xl bg-white/70 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 backdrop-blur-sm hover:border-emerald-500/30 hover:shadow-xl hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-5 border border-emerald-500/20 group-hover:scale-110 transition-transform">
+                  <Package className="text-emerald-600 dark:text-emerald-400 w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Real-time Inventory</h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Track stock levels, get low-stock alerts, and manage your entire product catalog in real time.
+                </p>
+              </div>
+              {/* Card 3 */}
+              <div className="group p-8 rounded-2xl bg-white/70 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 backdrop-blur-sm hover:border-violet-500/30 hover:shadow-xl hover:shadow-violet-500/5 transition-all duration-300 hover:-translate-y-1">
+                <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-5 border border-violet-500/20 group-hover:scale-110 transition-transform">
+                  <Mic className="text-violet-600 dark:text-violet-400 w-6 h-6" />
+                </div>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Voice-Powered</h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Just speak your commands. Record sales, update stock, and check reports — all hands-free.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* TRUST BAR */}
+          <section className="relative z-10 border-t border-zinc-200 dark:border-zinc-800/60 py-10">
+            <div className="flex flex-wrap items-center justify-center gap-8 text-zinc-400 dark:text-zinc-500 text-sm">
+              <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-emerald-500" /> End-to-end Encrypted</div>
+              <div className="flex items-center gap-2"><Globe size={16} className="text-indigo-500" /> 4+ Languages Supported</div>
+              <div className="flex items-center gap-2"><Zap size={16} className="text-amber-500" /> Powered by Groq AI</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    )
+  }
 
   // ==========================================
   // VIEW: LOGIN GATEWAY
@@ -589,7 +796,16 @@ export default function Dashboard() {
                     <Label htmlFor="password" className="text-zinc-700 dark:text-zinc-300">Password / OTP</Label>
                     <span className="text-xs text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline">Send OTP</span>
                   </div>
-                  <Input id="password" type="password" placeholder="••••••••" className="bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white focus-visible:ring-indigo-500" defaultValue="password123" />
+                  <div className="relative">
+                    <Input id="password" type={showPassword ? "text" : "password"} placeholder="••••••••" className="bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white focus-visible:ring-indigo-500 pr-10" defaultValue="password123" />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
                 <Button
                   onClick={() => setIsAuthenticated(true)}
@@ -851,17 +1067,29 @@ export default function Dashboard() {
                         <Plus className="mr-2 h-4 w-4" /> {t.addItem}
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="sm:max-w-[425px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white">
+                    <DialogContent className="sm:max-w-[480px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white">
                       <DialogHeader>
                         <DialogTitle>{t.addItem}</DialogTitle>
                         <DialogDescription className="text-zinc-500 dark:text-zinc-400">
-                          Manually enter a new product to your inventory ledger. (Hint: It's faster to just tell the AI Agent to do this!)
+                          Add a new product to your inventory.
                         </DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="add-name" className="text-right text-zinc-700 dark:text-zinc-300">Name</Label>
+                          <Input id="add-name" placeholder="Havells 16A MCB" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="add-sku" className="text-right text-zinc-700 dark:text-zinc-300">SKU</Label>
-                          <Input id="add-sku" placeholder="PAR-50G" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                          <Input id="add-sku" placeholder="ELE-MCB-16A" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="add-price" className="text-right text-zinc-700 dark:text-zinc-300">Price (₹)</Label>
+                          <Input id="add-price" type="number" placeholder="245" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="add-category" className="text-right text-zinc-700 dark:text-zinc-300">Category</Label>
+                          <Input id="add-category" placeholder="Electronics" className="col-span-3 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-700" />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="add-qty" className="text-right text-zinc-700 dark:text-zinc-300">Stock Qty</Label>
@@ -870,14 +1098,18 @@ export default function Dashboard() {
                       </div>
                       <DialogFooter>
                         <Button onClick={async () => {
+                          const name = (document.getElementById('add-name') as HTMLInputElement)?.value;
                           const sku = (document.getElementById('add-sku') as HTMLInputElement)?.value;
+                          const price = parseFloat((document.getElementById('add-price') as HTMLInputElement)?.value || '0');
+                          const category = (document.getElementById('add-category') as HTMLInputElement)?.value || 'General';
                           const qty = parseInt((document.getElementById('add-qty') as HTMLInputElement)?.value || '0');
-                          if (!sku || qty <= 0) return;
+                          if (!name || !sku || price <= 0) { setApiError('Name, SKU, and Price are required.'); return; }
                           try {
-                            await apiFetch('/inventory/update', { method: 'POST', body: JSON.stringify({ shop_id: SHOP_ID, sku, quantity: qty, update_type: 'incoming' }) });
+                            await apiFetch('/inventory/create', { method: 'POST', body: JSON.stringify({ shop_id: SHOP_ID, name, sku, unit_price: price, category, quantity: qty }) });
                             fetchInventory();
+                            setApiError(null);
                           } catch (err: any) { setApiError(err.message); }
-                        }} className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white">Save Item</Button>
+                        }} className="bg-indigo-600 hover:bg-indigo-700 dark:hover:bg-indigo-500 text-white">Add Product</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
@@ -892,6 +1124,7 @@ export default function Dashboard() {
                         <TableHead className="text-zinc-500 dark:text-zinc-400">Status</TableHead>
                         <TableHead className="text-right text-zinc-500 dark:text-zinc-400">Price</TableHead>
                         <TableHead className="text-right text-zinc-500 dark:text-zinc-400">Stock</TableHead>
+                        <TableHead className="text-right text-zinc-500 dark:text-zinc-400">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -910,6 +1143,18 @@ export default function Dashboard() {
                           </TableCell>
                           <TableCell className="text-right text-zinc-600 dark:text-zinc-300">{item.price}</TableCell>
                           <TableCell className="text-right text-zinc-900 dark:text-white font-medium">{item.stock}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-500/10 h-7 px-2 text-xs"
+                              onClick={async () => {
+                                if (!confirm(`Delete ${item.name}?`)) return;
+                                try {
+                                  await apiFetch(`/inventory/${item.id}?shop_id=${SHOP_ID}`, { method: 'DELETE' });
+                                  fetchInventory();
+                                } catch (err: any) { setApiError(err.message); }
+                              }}>
+                              <X size={14} className="mr-1" /> Delete
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1219,7 +1464,7 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Monthly P&L (Profit)</p>
-                    <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{reportsData.pnl}</p>
+                    <p className={`text-3xl font-bold ${reportsData.pnl.includes("-") ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>{reportsData.pnl}</p>
                   </Card>
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Total Revenue</p>
@@ -1228,6 +1473,28 @@ export default function Dashboard() {
                   <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 p-6 flex flex-col justify-center shadow-sm dark:shadow-none">
                     <p className="text-zinc-500 dark:text-zinc-400 text-sm font-medium mb-1">Estimated GST</p>
                     <p className="text-3xl font-bold text-amber-600 dark:text-amber-400">{reportsData.gst}</p>
+                  </Card>
+                </div>
+
+                <div className="mb-6">
+                  <Card className="bg-white dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 shadow-sm dark:shadow-none p-6">
+                    <h4 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">7-Day Sales Trend</h4>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={reportsData.salesTrend}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#3f3f46" />
+                          <XAxis dataKey="date" stroke="#a1a1aa" fontSize={12} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#a1a1aa" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `₹${value}`} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px' }}
+                            itemStyle={{ color: '#818cf8', fontWeight: 600 }}
+                            formatter={(value: any) => [`₹${value}`, 'Revenue']}
+                            labelStyle={{ color: '#a1a1aa', marginBottom: '4px' }}
+                          />
+                          <Line type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
                   </Card>
                 </div>
 
@@ -1303,7 +1570,7 @@ export default function Dashboard() {
                       </div>
                       <div>
                         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">AI Engine</p>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-white">Gemini 2.5 Flash</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">Groq LLaMA 3.3 70B</p>
                       </div>
                     </div>
                   </Card>
@@ -1342,7 +1609,7 @@ export default function Dashboard() {
                     <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                       BazaarOS is a multilingual AI-powered ERP built for Indian MSME merchants. It features voice-driven inventory management,
                       automated sales tracking, khata (credit ledger) management, and intelligent business analytics — all powered by
-                      Google Gemini and Sarvam AI.
+                      Groq AI and Sarvam AI.
                     </p>
                     <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">Built for GenAI Hackathon 2026 · Team Linguaverse</p>
                   </Card>
@@ -1440,7 +1707,7 @@ export default function Dashboard() {
                   }}
                 />
                 <Button
-                  onClick={handleSendMessage}
+                  onClick={() => handleSendMessage()}
                   disabled={isTyping || !inputText.trim()}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg h-10 w-10 shrink-0 p-0 disabled:opacity-50"
                 >
@@ -1504,15 +1771,15 @@ function SapCard({ title, subtitle, icon, alert, highlight, onClick }: any) {
 
 function AgentMessage({ message, type, action, onConfirm, onCancel }: any) {
   return (
-    <div className="flex gap-3">
-      <Avatar className="w-8 h-8 mt-1 border border-zinc-200 dark:border-zinc-700/50">
+    <div className="flex gap-3 min-w-0">
+      <Avatar className="w-8 h-8 mt-1 border border-zinc-200 dark:border-zinc-700/50 shrink-0">
         <AvatarFallback className={`text-xs ${type === 'success' ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400'}`}>
           {type === 'success' ? <CheckCircle2 size={16} /> : <Bot size={16} />}
         </AvatarFallback>
       </Avatar>
 
-      <div className="flex-1">
-        <div className="bg-white dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/50 p-3 rounded-2xl rounded-tl-none text-sm text-zinc-800 dark:text-zinc-200 leading-relaxed shadow-sm">
+      <div className="flex-1 min-w-0">
+        <div className="bg-white dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/50 p-3 rounded-2xl rounded-tl-none text-sm text-zinc-800 dark:text-zinc-200 leading-relaxed shadow-sm break-words overflow-hidden">
           {message}
           {action && (
             <Card className="mt-3 p-3 bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-none">
@@ -1545,7 +1812,7 @@ function UserMessage({ message, language }: any) {
             <User size={16} />
           </AvatarFallback>
         </Avatar>
-        <div className="bg-indigo-600 shadow-md shadow-indigo-600/20 text-white p-3 rounded-2xl rounded-tr-none text-sm">
+        <div className="bg-indigo-600 shadow-md shadow-indigo-600/20 text-white p-3 rounded-2xl rounded-tr-none text-sm break-words overflow-hidden max-w-[85%]">
           {message}
         </div>
       </div>

@@ -11,6 +11,7 @@ class UpdateType(str, Enum):
 
 class AgentAction(str, Enum):
     UPDATE_STOCK = "update_stock"
+    ADD_PRODUCT = "add_product"
     RECORD_SALE = "record_sale"
     KHATA_PAYMENT = "khata_payment"
     GET_STOCK = "get_stock"
@@ -29,6 +30,14 @@ class StockUpdate(BaseModel):
     sku: str = Field(..., min_length=1, description="SKU cannot be empty")
     quantity: int = Field(..., gt=0, description="Quantity must be strictly greater than 0")
     update_type: UpdateType
+
+class ProductCreate(BaseModel):
+    shop_id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, description="Product name")
+    sku: str = Field(..., min_length=1, description="Unique SKU code")
+    quantity: int = Field(default=0, ge=0)
+    unit_price: float = Field(..., ge=0, description="Unit price")
+    category: str = Field(default="General")
 
 # --- Sales ---
 class SaleRecord(BaseModel):
@@ -57,6 +66,7 @@ class AgentResponse(BaseModel):
     customer_name: str
     confidence: float
     response_text: str
+    detected_language: str = "en"
 
     # This allows Pydantic to read directly from SQLAlchemy models later if needed
     model_config = ConfigDict(from_attributes=True)

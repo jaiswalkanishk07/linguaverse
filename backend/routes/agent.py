@@ -14,13 +14,13 @@ router = APIRouter()
 def parse_user_message(payload: AgentRequest, db: Session = Depends(get_db)):
     """
     Takes a natural language message from the frontend, pulls live DB context, 
-    and asks Gemini to parse it into a strict JSON action.
+    and asks the Groq LLM to parse it into a strict JSON action.
     """
     try:
-        # 1. Grab the live inventory and Khata data so Gemini isn't blind
+        # 1. Grab the live inventory and Khata data so the LLM has context
         context = build_context(payload.shop_id, db)
         
-        # 2. Pass the user's message and the live context to the Gemini model
+        # 2. Pass the user's message and the live context to the Groq model
         ai_response = parse_intent(message=payload.message, context=context)
         
         return ai_response
